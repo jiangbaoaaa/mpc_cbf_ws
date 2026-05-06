@@ -125,25 +125,25 @@ Visualization Manager:
       Axis: Z
       Channel Name: intensity
       Class: rviz/PointCloud2
-      Color: 0; 0; 255
-      Color Transformer: Intensity
+      Color: 255; 220; 0
+      Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
-      Max Color: 0; 0; 255
+      Max Color: 255; 220; 0
       Min Color: 0; 0; 0
-      Name: LocalPCD
+      Name: FilteredLocalPCD
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
-      Size (Pixels): 10
-      Size (m): 0.05000000074505806
-      Style: Points
+      Size (Pixels): 6
+      Size (m): 0.05999999865889549
+      Style: Flat Squares
       Topic: /local_map_pub/local_pcd
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
-      Value: false
+      Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -231,6 +231,14 @@ Visualization Manager:
       Namespaces:
         ellipse: true
         text: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /local_map_pub/fov_vis
+      Name: SensorFOV
+      Namespaces:
+        local_map_fov: true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray

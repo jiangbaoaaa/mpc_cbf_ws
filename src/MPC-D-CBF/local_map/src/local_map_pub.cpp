@@ -1,7 +1,10 @@
 #include <ros/ros.h>
 #include <tf/transform_listener.h>
 #include <tf_conversions/tf_eigen.h>
+#include <visualization_msgs/Marker.h>
 #include <std_msgs/Float32MultiArray.h>
+
+#include <cmath>
 
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
@@ -20,6 +23,8 @@ using namespace std;
 GridMap map_({"elevation", "local_lidar", "gradient_map"});
 
 pcl::PointCloud<pcl::PointXYZ> velodyne_cloud;
+pcl::PointCloud<pcl::PointXYZ> velodyne_cloud_xy_filtered;
+pcl::PointCloud<pcl::PointXYZ> velodyne_cloud_fov_filtered;
 pcl::PointCloud<pcl::PointXYZ> velodyne_cloud_filter;
 pcl::PointCloud<pcl::PointXYZ> velodyne_cloud_global;
 
@@ -39,6 +44,7 @@ ros::Publisher gridmap_pub;
 ros::Publisher ellipse_vis_pub;
 ros::Publisher local_pcd_pub;
 ros::Publisher for_obs_track_pub;
+ros::Publisher fov_vis_pub;
 
 KMAlgorithm KM;
 
@@ -51,6 +57,97 @@ float obs_height;
 
 int block_size;
 int block_num;
+
+bool enable_fov_filter = true;
+bool publish_fov_marker = true;
+float fov_deg = 70.0f;
+float fov_range_min = 0.2f;
+float fov_range_max = 7.0f;
+
+constexpr double kPi = 3.14159265358979323846;
+
+void applyFovFilter(const pcl::PointCloud<pcl::PointXYZ> &src, pcl::PointCloud<pcl::PointXYZ> &dst)
+{
+  dst.clear();
+  if (!enable_fov_filter)
+  {
+    dst = src;
+    return;
+  }
+
+  const double half_fov_rad = 0.5 * static_cast<double>(fov_deg) * kPi / 180.0;
+  for (const auto &pt : src.points)
+  {
+    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
+      continue;
+
+    const double range_xy = std::hypot(pt.x, pt.y);
+    if (range_xy < fov_range_min || range_xy > fov_range_max)
+      continue;
+
+    const double angle = std::atan2(pt.y, pt.x);
+    if (std::abs(angle) <= half_fov_rad)
+      dst.points.push_back(pt);
+  }
+
+  dst.width = dst.points.size();
+  dst.height = 1;
+  dst.is_dense = false;
+}
+
+void publishFovMarker()
+{
+  if (!publish_fov_marker)
+    return;
+
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = "world";
+  marker.header.stamp = ros::Time::now();
+  marker.ns = "local_map_fov";
+  marker.id = 0;
+  marker.type = visualization_msgs::Marker::LINE_STRIP;
+  marker.action = visualization_msgs::Marker::ADD;
+  marker.pose.orientation.w = 1.0;
+  marker.scale.x = 0.05;
+  marker.color.r = 1.0;
+  marker.color.g = 0.85;
+  marker.color.b = 0.15;
+  marker.color.a = 0.9;
+
+  const double origin_x = lidar_link_transform.getOrigin().x();
+  const double origin_y = lidar_link_transform.getOrigin().y();
+  const double origin_z = lidar_link_transform.getOrigin().z();
+
+  double roll = 0.0;
+  double pitch = 0.0;
+  double yaw = 0.0;
+  tf::Matrix3x3(lidar_link_transform.getRotation()).getRPY(roll, pitch, yaw);
+
+  const double half_fov_rad = 0.5 * static_cast<double>(fov_deg) * kPi / 180.0;
+  const double vis_range = std::max(static_cast<double>(fov_range_max), static_cast<double>(fov_range_min));
+  const int arc_segments = 24;
+
+  geometry_msgs::Point origin;
+  origin.x = origin_x;
+  origin.y = origin_y;
+  origin.z = origin_z;
+  marker.points.push_back(origin);
+
+  for (int i = 0; i <= arc_segments; ++i)
+  {
+    const double ratio = static_cast<double>(i) / static_cast<double>(arc_segments);
+    const double angle = yaw - half_fov_rad + ratio * (2.0 * half_fov_rad);
+
+    geometry_msgs::Point arc_pt;
+    arc_pt.x = origin_x + vis_range * std::cos(angle);
+    arc_pt.y = origin_y + vis_range * std::sin(angle);
+    arc_pt.z = origin_z;
+    marker.points.push_back(arc_pt);
+  }
+
+  marker.points.push_back(origin);
+  fov_vis_pub.publish(marker);
+}
 
 // robot pose obtain
 void updateTF()
@@ -77,13 +174,15 @@ void updateTF()
 void pcd_transform()
 {
   pass_x.setInputCloud(velodyne_cloud.makeShared());
-  pass_x.filter(velodyne_cloud);
+  pass_x.filter(velodyne_cloud_xy_filtered);
 
-  pass_y.setInputCloud(velodyne_cloud.makeShared());
-  pass_y.filter(velodyne_cloud);
+  pass_y.setInputCloud(velodyne_cloud_xy_filtered.makeShared());
+  pass_y.filter(velodyne_cloud_xy_filtered);
+
+  applyFovFilter(velodyne_cloud_xy_filtered, velodyne_cloud_fov_filtered);
 
   velodyne_cloud_filter.clear();
-  sor.setInputCloud(velodyne_cloud.makeShared());
+  sor.setInputCloud(velodyne_cloud_fov_filtered.makeShared());
   sor.filter(velodyne_cloud_filter);
 
   Eigen::Affine3d affine_transform;
@@ -244,6 +343,7 @@ int main(int argc, char **argv)
   local_pcd_pub = nh.advertise<sensor_msgs::PointCloud2>("local_pcd", 1);
   ellipse_vis_pub = nh.advertise<visualization_msgs::MarkerArray>("ellipse_vis", 1);
   for_obs_track_pub = nh.advertise<std_msgs::Float32MultiArray>("for_obs_track", 1);
+  fov_vis_pub = nh.advertise<visualization_msgs::Marker>("fov_vis", 1);
   velodyne_sub = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1, [&](sensor_msgs::PointCloud2::ConstPtr msg)
                                                         { 
   pcl::fromROSMsg(*msg, velodyne_cloud);    
@@ -258,6 +358,11 @@ int main(int argc, char **argv)
   nh.param<float>("step_height", step_height, 0.5);
   nh.param<float>("DBSCAN_R", DBSCAN_R, 5.0);
   nh.param<int>("DBSCAN_N", DBSCAN_N, 5);
+  nh.param<bool>("enable_fov_filter", enable_fov_filter, true);
+  nh.param<bool>("publish_fov_marker", publish_fov_marker, true);
+  nh.param<float>("fov_deg", fov_deg, 70.0f);
+  nh.param<float>("fov_range_min", fov_range_min, 0.2f);
+  nh.param<float>("fov_range_max", fov_range_max, 7.0f);
 
   nh.param<int>("block_size", block_size, localmap_x_size * _inv_resolution * 0.2);
   nh.param<int>("block_num", block_num, 5);
@@ -288,6 +393,7 @@ int main(int argc, char **argv)
   {
     robot_position2d << base_link_transform.getOrigin().x(), base_link_transform.getOrigin().y();
     pcd_transform();
+    publishFovMarker();
     map_.setPosition(robot_position2d);
     map_.clear("local_lidar");
     lidar_pcd_matrix = map_.get("local_lidar");

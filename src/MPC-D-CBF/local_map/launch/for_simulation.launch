@@ -6,6 +6,11 @@
     <arg name="step_height" default="0.5"/>
     <arg name="DBSCAN_R" default="5.0"/>
     <arg name="DBSCAN_N" default="4"/>
+    <arg name="enable_fov_filter" default="true"/>
+    <arg name="fov_deg" default="70.0"/>
+    <arg name="fov_range_min" default="0.2"/>
+    <arg name="fov_range_max" default="7.0"/>
+    <arg name="publish_fov_marker" default="true"/>
 
     <node pkg="local_map" type="local_map_pub" output="screen" name="local_map_pub">  
         <param name="localmap_x_size" value="$(arg localmap_x_size)"/>  
@@ -15,5 +20,10 @@
         <param name="step_height" value="$(arg step_height)"/>
         <param name="DBSCAN_R" value="$(arg DBSCAN_R)"/>
         <param name="DBSCAN_N" value="$(arg DBSCAN_N)"/>
+        <param name="enable_fov_filter" value="$(arg enable_fov_filter)"/>
+        <param name="fov_deg" value="$(arg fov_deg)"/>
+        <param name="fov_range_min" value="$(arg fov_range_min)"/>
+        <param name="fov_range_max" value="$(arg fov_range_max)"/>
+        <param name="publish_fov_marker" value="$(arg publish_fov_marker)"/>
     </node>
 </launch>
