@@ -1,0 +1,10 @@
+<launch>
+  <arg name="use_controller" default="true" />
+  <arg name="planner_script" default="my_local_planner.py" />
+
+  <node name="local_planner" pkg="local_planner" type="$(arg planner_script)" output="screen" />
+
+  <group if="$(arg use_controller)">
+    <node name="controller" pkg="local_planner" type="controller.py" />
+  </group>
+</launch>

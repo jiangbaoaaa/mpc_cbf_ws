@@ -1,0 +1,19 @@
+<launch>
+    <arg name="localmap_x_size" default="14"/>
+    <arg name="localmap_y_size" default="14"/>
+    <arg name="resolution" default="0.1"/>
+    <arg name="obs_height" default="0.4"/>
+    <arg name="step_height" default="0.5"/>
+    <arg name="DBSCAN_R" default="5.0"/>
+    <arg name="DBSCAN_N" default="4"/>
+
+    <node pkg="local_map" type="local_map_pub" output="screen" name="local_map_pub">  
+        <param name="localmap_x_size" value="$(arg localmap_x_size)"/>  
+        <param name="localmap_y_size" value="$(arg localmap_y_size)"/>
+        <param name="resolution" value="$(arg resolution)"/>
+        <param name="obs_height" value="$(arg obs_height)"/>
+        <param name="step_height" value="$(arg step_height)"/>
+        <param name="DBSCAN_R" value="$(arg DBSCAN_R)"/>
+        <param name="DBSCAN_N" value="$(arg DBSCAN_N)"/>
+    </node>
+</launch>

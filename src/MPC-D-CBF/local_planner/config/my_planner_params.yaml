@@ -1,0 +1,40 @@
+my_local_planner:
+  horizon: 25
+  dt: 0.1
+  
+  # 【避障激进程度调优】
+  gamma_k: 0.25          # 提前响应，但不要保守到把正常路径拉弯
+  robot_radius: 0.3      # (原0.35) 稍微缩小车体膨胀
+  safety_margin: 0.12    # 恢复更接近原始效果，减少不必要的偏航
+  obstacle_padding: 0.22 # 椭圆安全函数的额外膨胀距离
+  obstacle_relevance_dist: 2.8  # 只对前方近距离、真正挡路的障碍施加约束
+  dynamic_speed_threshold: 0.12  # 超过这个预测速度就按动态障碍处理
+  static_obstacle_padding: 0.12  # 静态障碍更贴近一些，减少绕大圈
+  dynamic_obstacle_padding: 0.40 # 动态障碍留更大余量，避免交汇点擦撞
+  static_gamma_k: 0.08           # 静态障碍允许更灵活一点，少拐大弯
+  dynamic_gamma_k: 0.20          # 动态障碍更保守，更早开始规避
+  static_relevance_dist: 2.4     # 静态障碍只在近处进入约束
+  dynamic_relevance_dist: 4.0    # 动态障碍提前纳入约束
+  
+  # 【软约束调优】
+  use_slack: true
+  slack_weight: 700.0    # 提高违反安全约束的代价，让避障更及时
+  terminal_slack_weight: 1800.0  # 终端安全收紧，减少贴边穿过
+  static_slack_weight_scale: 0.5
+  dynamic_slack_weight_scale: 1.8
+  
+  # 【运动学极限】
+  v_max: 1.1
+  v_min: 0.0
+  omega_max: 1.2         # 不再单纯放宽转向上限，改用平滑项抑制大幅猛打
+  cruise_v_min: 0.15     # 远离终点时保持基本前进速度，避免无障碍时原地自转
+  near_goal_dist: 1.0    # 接近终点后放松最小速度约束，便于最后收敛
+
+  # 【平滑性调优】
+  control_weight_v: 0.1
+  control_weight_omega: 0.05
+  delta_weight_v: 0.1
+  delta_weight_omega: 0.2
+  
+  goal_tolerance: 0.15
+  publish_vehicle_box: true

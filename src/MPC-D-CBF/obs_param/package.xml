@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>obs_param</name>
+  <version>0.0.0</version>
+  <description>The obs_param package</description>
+
+  <maintainer email="robotthu@todo.todo">robotthu</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
+
+  <export />
+</package>

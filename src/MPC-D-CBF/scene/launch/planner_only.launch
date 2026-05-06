@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+
+<launch>
+  <rosparam file="$(find local_planner)/config/my_planner_params.yaml" command="load" />
+  <arg name="use_controller" default="true" />
+  <arg name="planner_script" default="my_local_planner.py" />
+
+  <include file="$(find local_planner)/launch/local_planner.launch">
+    <arg name="use_controller" value="$(arg use_controller)" />
+    <arg name="planner_script" value="$(arg planner_script)" />
+  </include>
+</launch>

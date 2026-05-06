@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.0.2)
+project(local_planner)
+
+find_package(catkin REQUIRED COMPONENTS
+  geometry_msgs
+  nav_msgs
+  roscpp
+  rospy
+  std_msgs
+  tf
+  visualization_msgs
+)
+
+catkin_package(
+  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs tf visualization_msgs
+)
+
+catkin_install_python(PROGRAMS
+  scripts/local_planner.py
+  scripts/my_local_planner.py
+  scripts/controller.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY launch config
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+)

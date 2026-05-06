@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+
+<launch>
+  <arg name="use_rviz" default="true" />
+  <arg name="use_gazebo_gui" default="true" />
+
+  <group if="$(arg use_gazebo_gui)">
+    <node name="gazebo_gui" pkg="gazebo_ros" type="gzclient" respawn="false" output="screen" />
+  </group>
+
+  <group if="$(arg use_rviz)">
+    <node
+      name="rviz"
+      pkg="rviz"
+      type="rviz"
+      args="-d $(find scene)/rviz_config/simulation.rviz"
+      required="true" />
+  </group>
+</launch>

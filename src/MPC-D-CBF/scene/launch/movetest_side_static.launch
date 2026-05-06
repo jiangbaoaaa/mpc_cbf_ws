@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+
+<launch>
+  <node pkg="scene" type="movetest_side_static_node" name="movetest_side_static_node" output="screen" required="true">
+    <param name="trigger_x" type="double" value="3.5"/>
+    <param name="x0" type="double" value="7.2"/>
+    <param name="y0" type="double" value="-0.9"/>
+    <param name="z0" type="double" value="0.25"/>
+    <param name="vx0" type="double" value="0.0"/>
+    <param name="vy0" type="double" value="0.002"/>
+  </node>
+</launch>
