@@ -1,6 +1,0 @@
-<?xml version="1.0"?>
-
-<launch>
-  <include file="$(find scene)/launch/env_visualization.launch" />
-  <include file="$(find scene)/launch/planner_only.launch" />
-</launch>

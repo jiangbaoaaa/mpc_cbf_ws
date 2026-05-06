@@ -137,6 +137,12 @@ roslaunch scene env_visualization.launch
 roslaunch scene env_visualization_side_static.launch
 ```
 
+如果你要先验证“墙体遮挡 + 墙后静态障碍”的有限视野问题，可以改为：
+
+```bash
+roslaunch scene env_visualization_blind_wall_static.launch
+```
+
 这个 launch 会启动：
 
 - Gazebo 服务器 `gzserver`
@@ -145,7 +151,7 @@ roslaunch scene env_visualization_side_static.launch
 - Jackal 模型描述和底盘控制
 - 机器人 spawn
 - `local_map`
-- `movetest_node`
+- 可选障碍物节点
 - `obs_kf`
 - `global_path_pub`
 
@@ -190,20 +196,9 @@ roslaunch scene sim_environment.launch
 - Jackal 模型描述和底盘控制
 - 机器人 spawn
 - `local_map`
-- `movetest_node` 动态障碍物
+- 可选障碍物节点
 - `obs_kf` 障碍物预测
 - `global_path_pub` 全局路径
-
-### 方式 C：单命令全启动
-
-```bash
-roslaunch scene full_stack.launch
-```
-
-这个 launch 现在等价于：
-
-- 先启动 `env_visualization.launch`
-- 再启动 `planner_only.launch`
 
 ## 6. 按优化目标快速定位文件
 
@@ -268,6 +263,7 @@ roslaunch scene full_stack.launch
 
 - `env_visualization.launch`：环境 + 可视化，不启动规划器
 - `env_visualization_side_static.launch`：新场景，环境 + 可视化，不启动规划器
+- `env_visualization_blind_wall_static.launch`：墙体遮挡 + 墙后静态障碍，不启动规划器
 - `planner_only.launch`：只启动规划器
 - `visualization.launch`：只负责 Gazebo GUI 和 RViz，供其他 launch 复用
 

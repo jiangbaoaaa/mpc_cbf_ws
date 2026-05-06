@@ -5,6 +5,10 @@
   <arg name="spawn_x" default="-10.0" />
   <arg name="spawn_y" default="0.0" />
   <arg name="spawn_z" default="1.0" />
+  <arg name="localmap_x_size" default="14" />
+  <arg name="localmap_y_size" default="14" />
+  <arg name="use_obstacle_node" default="true" />
+  <arg name="obstacle_launch" default="$(find scene)/launch/movetest_node.launch" />
   <arg name="use_rviz" default="true" />
   <arg name="use_gazebo_gui" default="true" />
   <arg name="enable_fov_filter" default="true" />
@@ -18,6 +22,10 @@
     <arg name="spawn_x" value="$(arg spawn_x)" />
     <arg name="spawn_y" value="$(arg spawn_y)" />
     <arg name="spawn_z" value="$(arg spawn_z)" />
+    <arg name="localmap_x_size" value="$(arg localmap_x_size)" />
+    <arg name="localmap_y_size" value="$(arg localmap_y_size)" />
+    <arg name="use_obstacle_node" value="$(arg use_obstacle_node)" />
+    <arg name="obstacle_launch" value="$(arg obstacle_launch)" />
     <arg name="enable_fov_filter" value="$(arg enable_fov_filter)" />
     <arg name="fov_deg" value="$(arg fov_deg)" />
     <arg name="fov_range_min" value="$(arg fov_range_min)" />

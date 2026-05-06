@@ -5,11 +5,28 @@
   <arg name="spawn_x" default="-10.0" />
   <arg name="spawn_y" default="0.0" />
   <arg name="spawn_z" default="1.0" />
+  <arg name="localmap_x_size" default="14" />
+  <arg name="localmap_y_size" default="14" />
+  <arg name="use_obstacle_node" default="true" />
+  <arg name="obstacle_launch" default="$(find scene)/launch/movetest_node.launch" />
   <arg name="enable_fov_filter" default="true" />
   <arg name="fov_deg" default="70.0" />
   <arg name="fov_range_min" default="0.2" />
   <arg name="fov_range_max" default="7.0" />
   <arg name="publish_fov_marker" default="true" />
+  <arg name="global_path_start_x" default="-10.0" />
+  <arg name="global_path_start_y" default="0.0" />
+  <arg name="global_path_end_x" default="9.0" />
+  <arg name="global_path_end_y" default="0.0" />
+  <arg name="global_path_waypoints" default="" />
+  <arg name="global_path_step" default="0.1" />
+  <arg name="global_path_smooth" default="false" />
+  <arg name="show_gazebo_global_path" default="false" />
+  <arg name="gazebo_global_path_stride" default="3" />
+  <arg name="spawn_goal_marker" default="false" />
+  <arg name="goal_marker_x" default="$(arg global_path_end_x)" />
+  <arg name="goal_marker_y" default="$(arg global_path_end_y)" />
+  <arg name="goal_marker_z" default="0.0" />
 
   <include file="$(find scene)/launch/start.launch">
     <arg name="world" value="$(arg world)" />
@@ -30,14 +47,39 @@
     type="spawn_model"
     args="-urdf -model jackal -param robot_description -x $(arg spawn_x) -y $(arg spawn_y) -z $(arg spawn_z)" />
 
+  <node
+    if="$(arg spawn_goal_marker)"
+    name="goal_marker_spawner"
+    pkg="gazebo_ros"
+    type="spawn_model"
+    args="-urdf -model goal_marker -file $(find scene)/urdf/goal_marker.urdf -x $(arg goal_marker_x) -y $(arg goal_marker_y) -z $(arg goal_marker_z)" />
+
   <include file="$(find local_map)/launch/for_simulation.launch">
+    <arg name="localmap_x_size" value="$(arg localmap_x_size)" />
+    <arg name="localmap_y_size" value="$(arg localmap_y_size)" />
     <arg name="enable_fov_filter" value="$(arg enable_fov_filter)" />
     <arg name="fov_deg" value="$(arg fov_deg)" />
     <arg name="fov_range_min" value="$(arg fov_range_min)" />
     <arg name="fov_range_max" value="$(arg fov_range_max)" />
     <arg name="publish_fov_marker" value="$(arg publish_fov_marker)" />
   </include>
-  <include file="$(find scene)/launch/movetest_node.launch" />
+  <include if="$(arg use_obstacle_node)" file="$(arg obstacle_launch)" />
   <node pkg="obs_param" type="obs_kf" output="screen" name="obs_kf" />
-  <include file="$(find global_path_publisher)/launch/pub_global_path.launch" />
+  <include file="$(find global_path_publisher)/launch/pub_global_path.launch">
+    <arg name="start_x" value="$(arg global_path_start_x)" />
+    <arg name="start_y" value="$(arg global_path_start_y)" />
+    <arg name="end_x" value="$(arg global_path_end_x)" />
+    <arg name="end_y" value="$(arg global_path_end_y)" />
+    <arg name="path_waypoints" value="$(arg global_path_waypoints)" />
+    <arg name="path_step" value="$(arg global_path_step)" />
+    <arg name="smooth_path" value="$(arg global_path_smooth)" />
+  </include>
+
+  <node if="$(arg show_gazebo_global_path)"
+        pkg="scene"
+        type="gazebo_path_visualizer.py"
+        name="gazebo_path_visualizer"
+        output="screen">
+    <param name="sample_stride" value="$(arg gazebo_global_path_stride)" />
+  </node>
 </launch>

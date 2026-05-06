@@ -20,6 +20,11 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
+catkin_install_python(PROGRAMS
+  scripts/gazebo_path_visualizer.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 add_executable(movetest_node src/movetest.cpp)
 target_link_libraries(movetest_node ${catkin_LIBRARIES})
 

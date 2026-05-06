@@ -64,7 +64,7 @@
 - `jackal_control`
 - 机器人 spawn
 - `local_map`
-- `movetest_node`
+- 可选障碍物节点
 - `obs_kf`
 - `global_path_publisher`
 

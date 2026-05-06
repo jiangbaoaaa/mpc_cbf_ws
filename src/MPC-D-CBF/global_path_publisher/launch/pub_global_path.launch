@@ -1,9 +1,20 @@
 <launch>
+    <arg name="start_x" default="-10.0"/>
+    <arg name="start_y" default="0.0"/>
+    <arg name="end_x" default="9.0"/>
+    <arg name="end_y" default="0.0"/>
+    <arg name="path_waypoints" default=""/>
+    <arg name="path_step" default="0.1"/>
+    <arg name="smooth_path" default="false"/>
+
     <node pkg="global_path_publisher" type="global_path_pub" output="screen" name="global_path_pub">  
-        <param name="start_x" value="-10.0"/> 
-        <param name="start_y" value="0.0"/>  
-        <param name="end_x" value="9.0"/>  
-        <param name="end_y" value="0.0"/>   
+        <param name="start_x" value="$(arg start_x)"/> 
+        <param name="start_y" value="$(arg start_y)"/>  
+        <param name="end_x" value="$(arg end_x)"/>  
+        <param name="end_y" value="$(arg end_y)"/>
+        <param name="path_waypoints" value="$(arg path_waypoints)"/>
+        <param name="path_step" value="$(arg path_step)"/>
+        <param name="smooth_path" value="$(arg smooth_path)"/>
     </node>
 
 </launch>

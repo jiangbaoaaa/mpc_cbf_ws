@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<robot name="goal_marker">
+  <link name="goal_marker_link">
+    <visual>
+      <origin xyz="0 0 0.08" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.22" length="0.06"/>
+      </geometry>
+      <material name="goal_disc">
+        <color rgba="0.10 0.90 0.25 0.85"/>
+      </material>
+    </visual>
+
+    <visual>
+      <origin xyz="0 0 0.23" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.12"/>
+      </geometry>
+      <material name="goal_sphere">
+        <color rgba="1.00 0.85 0.10 0.95"/>
+      </material>
+    </visual>
+  </link>
+</robot>

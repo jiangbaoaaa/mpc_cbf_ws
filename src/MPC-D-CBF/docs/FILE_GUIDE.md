@@ -75,23 +75,11 @@
 - `jackal_control`
 - 机器人 spawn
 - `local_map`
-- `movetest_node`
+- 可选障碍物节点
 - `obs_kf`
 - `global_path_pub`
 
 如果你要换环境侧模块组合，基本会改这个文件。
-
-### `scene/launch/full_stack.launch`
-
-单命令总入口。  
-现在本质上就是把：
-
-- `env_visualization.launch`
-- `planner_only.launch`
-
-合在一起。
-
-适合快速跑全流程，不适合细粒度调试。
 
 ### `scene/launch/visualization.launch`
 
@@ -137,6 +125,23 @@
 - 不启动规划器
 
 如果你要复现实验里“最后一个动态障碍物”的效果，优先用它。
+
+### `scene/launch/env_visualization_blind_wall_static.launch`
+
+这是“墙体遮挡 + 墙后静态障碍”的专用入口。
+
+它负责：
+
+- 启动 `blind_wall_static.world`
+- 启动 Gazebo GUI
+- 启动 RViz
+- 不启动规划器
+
+适合先观察有限视野下：
+
+- 点云被墙体遮挡后的缺失情况
+- 隐藏静态障碍何时进入视野
+- 局部地图和椭圆拟合何时开始反映遮挡后的障碍
 
 ### `scene/launch/planner_only.launch`
 

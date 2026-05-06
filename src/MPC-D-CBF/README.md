@@ -70,6 +70,13 @@ avoidance experiment, use:
 roslaunch scene env_visualization_side_static.launch
 ```
 
+If you want an L-shaped occlusion scene with one hidden static obstacle and a
+handcrafted static global path into the blind pocket, use:
+
+```bash
+roslaunch scene env_visualization_blind_wall_static.launch
+```
+
 Terminal 2 starts only the planner and controller:
 
 ```bash
@@ -81,14 +88,6 @@ roslaunch scene planner_only.launch
 
 This mode is convenient when you are iterating on `local_map`, obstacle motion,
 or the simulation environment and want visualization before enabling planning.
-
-### Single-Command Launch
-
-If you want the single-command behavior, use:
-
-```bash
-roslaunch scene full_stack.launch
-```
 
 ## Planner Parameters
 

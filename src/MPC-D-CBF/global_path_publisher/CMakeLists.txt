@@ -6,11 +6,12 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   roscpp
   std_msgs
+  visualization_msgs
 )
 find_package(Eigen3 REQUIRED)
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp std_msgs
+  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp std_msgs visualization_msgs
 )
 
 include_directories(
