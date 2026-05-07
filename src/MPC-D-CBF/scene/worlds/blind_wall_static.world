@@ -47,7 +47,7 @@
       </link>
     </model>
 
-    <model name='occlusion_side_wall'>
+    <!-- <model name='occlusion_side_wall'>
       <static>true</static>
       <pose>2.00 -1.15 0.40 0 0 0</pose>
       <link name='link'>
@@ -72,7 +72,7 @@
           </material>
         </visual>
       </link>
-    </model>
+    </model> -->
 
     <model name='hidden_static_cylinder'>
       <static>true</static>

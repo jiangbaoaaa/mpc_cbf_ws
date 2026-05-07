@@ -16,6 +16,19 @@ my_local_planner:
   static_relevance_dist: 2.4     # 静态障碍只在近处进入约束
   dynamic_relevance_dist: 4.0    # 动态障碍提前纳入约束
   
+  # 【第一版几何视野约束】
+  enable_visibility_constraint: true
+  visibility_fov_deg: 70.0
+  visibility_ref_step: 4
+  visibility_margin: 0.01
+  visibility_use_slack: true
+  visibility_slack_weight: 180.0
+  collision_recovery_enable: true
+  collision_recovery_allow_reverse: true
+  collision_recovery_reverse_speed: 0.15
+  collision_recovery_turn_rate: 0.6
+  collision_recovery_release_visibility: true
+  
   # 【软约束调优】
   use_slack: true
   slack_weight: 700.0    # 提高违反安全约束的代价，让避障更及时
@@ -27,14 +40,14 @@ my_local_planner:
   v_max: 1.1
   v_min: 0.0
   omega_max: 1.2         # 不再单纯放宽转向上限，改用平滑项抑制大幅猛打
-  cruise_v_min: 0.15     # 远离终点时保持基本前进速度，避免无障碍时原地自转
+  cruise_v_min: 0.10     # 视野约束开启后，稍微降低巡航下限，减少盲区入口前的前冲
   near_goal_dist: 1.0    # 接近终点后放松最小速度约束，便于最后收敛
 
   # 【平滑性调优】
   control_weight_v: 0.1
-  control_weight_omega: 0.05
+  control_weight_omega: 0.08
   delta_weight_v: 0.1
-  delta_weight_omega: 0.2
+  delta_weight_omega: 0.35
   
   goal_tolerance: 0.15
   publish_vehicle_box: true

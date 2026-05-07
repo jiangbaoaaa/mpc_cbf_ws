@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+
+<launch>
+  <arg name="model_name" default="jackal" />
+  <arg name="x" default="-5.5" />
+  <arg name="y" default="0.0" />
+  <arg name="z" default="0.15" />
+  <arg name="yaw" default="0.0" />
+
+  <node pkg="scene"
+        type="reset_jackal_pose.py"
+        name="reset_jackal_pose"
+        output="screen">
+    <param name="model_name" value="$(arg model_name)" />
+    <param name="x" value="$(arg x)" />
+    <param name="y" value="$(arg y)" />
+    <param name="z" value="$(arg z)" />
+    <param name="yaw" value="$(arg yaw)" />
+  </node>
+</launch>

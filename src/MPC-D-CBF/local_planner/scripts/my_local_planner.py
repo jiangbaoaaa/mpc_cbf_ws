@@ -8,7 +8,7 @@ import rospy
 from geometry_msgs.msg import Point, PoseStamped
 from nav_msgs.msg import Path
 from std_msgs.msg import Bool, ColorRGBA, Float32MultiArray
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 def distance_global(c1, c2):
@@ -38,6 +38,20 @@ class MyLocalPlanner:
         self.slack_weight = rospy.get_param("/my_local_planner/slack_weight", 500.0)
         self.goal_tolerance = rospy.get_param("/my_local_planner/goal_tolerance", 0.15)
         self.publish_vehicle_box = rospy.get_param("/my_local_planner/publish_vehicle_box", True)
+        self.enable_visibility_constraint = rospy.get_param("/my_local_planner/enable_visibility_constraint", False)
+        self.visibility_fov_deg = rospy.get_param("/my_local_planner/visibility_fov_deg", 70.0)
+        self.visibility_ref_step = max(1, int(rospy.get_param("/my_local_planner/visibility_ref_step", 6)))
+        self.visibility_margin = rospy.get_param("/my_local_planner/visibility_margin", 0.02)
+        self.visibility_use_slack = rospy.get_param("/my_local_planner/visibility_use_slack", True)
+        self.visibility_slack_weight = rospy.get_param("/my_local_planner/visibility_slack_weight", 300.0)
+        self.visibility_cos_half_fov = np.cos(np.deg2rad(0.5 * self.visibility_fov_deg))
+        self.collision_recovery_enable = rospy.get_param("/my_local_planner/collision_recovery_enable", True)
+        self.collision_recovery_allow_reverse = rospy.get_param("/my_local_planner/collision_recovery_allow_reverse", True)
+        self.collision_recovery_reverse_speed = rospy.get_param("/my_local_planner/collision_recovery_reverse_speed", 0.15)
+        self.collision_recovery_turn_rate = rospy.get_param("/my_local_planner/collision_recovery_turn_rate", 0.6)
+        self.collision_recovery_release_visibility = rospy.get_param(
+            "/my_local_planner/collision_recovery_release_visibility", True
+        )
 
         # ===== 2. 平滑性与终端收敛参数 =====
         # 这几项是本次重点新增的“更平滑”调节参数：
@@ -92,6 +106,7 @@ class MyLocalPlanner:
         self.__pub_local_path = rospy.Publisher("/local_path", Path, queue_size=10)
         self.__pub_local_plan = rospy.Publisher("/local_plan", Float32MultiArray, queue_size=10)
         self.__pub_start = rospy.Publisher("/cmd_move", Bool, queue_size=10)
+        self.__pub_visibility_refs_vis = rospy.Publisher("/visibility_refs_vis", MarkerArray, queue_size=10)
 
     def __replan_cb(self, _event):
         # 每次定时器触发时：
@@ -186,6 +201,7 @@ class MyLocalPlanner:
         self.__pub_local_path_vis.publish(local_path_vis)
         self.__pub_local_path.publish(local_path)
         self.__pub_local_plan.publish(local_plan)
+        self._publish_visibility_markers(state_sol)
 
     def _append_vehicle_box(self, local_path_vis, state_sol, i):
         # 这部分只用于 RViz 中显示车体外框，不参与 MPC 求解。
@@ -213,6 +229,107 @@ class MyLocalPlanner:
             local_path_vis.colors.append(color)
             local_path_vis.points.append(corners[e])
             local_path_vis.colors.append(color)
+
+    def _visibility_score(self, state, ref_xy):
+        rel_x = ref_xy[0] - state[0]
+        rel_y = ref_xy[1] - state[1]
+        dist = np.hypot(rel_x, rel_y)
+        if dist < 1e-6:
+            return 0.0
+        forward = rel_x * np.cos(state[2]) + rel_y * np.sin(state[2])
+        return forward - dist * self.visibility_cos_half_fov - self.visibility_margin
+
+    def _publish_visibility_markers(self, state_sol):
+        marker_array = MarkerArray()
+
+        def add_delete_marker(marker_id):
+            marker = Marker()
+            marker.header.stamp = rospy.Time.now()
+            marker.header.frame_id = "world"
+            marker.id = marker_id
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        if not self.enable_visibility_constraint:
+            add_delete_marker(0)
+            add_delete_marker(1)
+            add_delete_marker(2)
+            self.__pub_visibility_refs_vis.publish(marker_array)
+            return
+
+        vis_refs = self._build_visibility_refs()
+
+        refs_marker = Marker()
+        refs_marker.header.stamp = rospy.Time.now()
+        refs_marker.header.frame_id = "world"
+        refs_marker.ns = "visibility_refs"
+        refs_marker.id = 0
+        refs_marker.type = Marker.SPHERE_LIST
+        refs_marker.action = Marker.ADD
+        refs_marker.pose.orientation.w = 1.0
+        refs_marker.scale.x = 0.16
+        refs_marker.scale.y = 0.16
+        refs_marker.scale.z = 0.16
+        refs_marker.color.r = 0.10
+        refs_marker.color.g = 0.85
+        refs_marker.color.b = 0.95
+        refs_marker.color.a = 0.9
+
+        path_marker = Marker()
+        path_marker.header = refs_marker.header
+        path_marker.ns = "visibility_ref_path"
+        path_marker.id = 1
+        path_marker.type = Marker.LINE_STRIP
+        path_marker.action = Marker.ADD
+        path_marker.pose.orientation.w = 1.0
+        path_marker.scale.x = 0.05
+        path_marker.color.r = 0.10
+        path_marker.color.g = 0.85
+        path_marker.color.b = 0.95
+        path_marker.color.a = 0.6
+
+        for ref_xy in vis_refs:
+            pt = Point()
+            pt.x = float(ref_xy[0])
+            pt.y = float(ref_xy[1])
+            pt.z = 0.06
+            refs_marker.points.append(pt)
+            path_marker.points.append(pt)
+
+        active_marker = Marker()
+        active_marker.header = refs_marker.header
+        active_marker.ns = "active_visibility_ref"
+        active_marker.id = 2
+        active_marker.type = Marker.ARROW
+        active_marker.action = Marker.ADD
+        active_marker.pose.orientation.w = 1.0
+        active_marker.scale.x = 0.07
+        active_marker.scale.y = 0.14
+        active_marker.scale.z = 0.18
+
+        score = self._visibility_score(state_sol[0], vis_refs[0])
+        if score >= 0.0:
+            active_marker.color.r = 0.20
+            active_marker.color.g = 0.95
+            active_marker.color.b = 0.20
+        else:
+            active_marker.color.r = 0.95
+            active_marker.color.g = 0.20
+            active_marker.color.b = 0.20
+        active_marker.color.a = 0.95
+
+        start_pt = Point()
+        start_pt.x = float(state_sol[0, 0])
+        start_pt.y = float(state_sol[0, 1])
+        start_pt.z = 0.10
+        end_pt = Point()
+        end_pt.x = float(vis_refs[0, 0])
+        end_pt.y = float(vis_refs[0, 1])
+        end_pt.z = 0.10
+        active_marker.points = [start_pt, end_pt]
+
+        marker_array.markers.extend([refs_marker, path_marker, active_marker])
+        self.__pub_visibility_refs_vis.publish(marker_array)
 
     def choose_goal_state(self):
         # 从全局路径中找到距离当前机器人最近的点，并向前截取 N 个点。
@@ -335,6 +452,41 @@ class MyLocalPlanner:
         self.last_state_valid = True
         return state_res, input_res
 
+    @staticmethod
+    def _normalize_angle(angle):
+        return np.arctan2(np.sin(angle), np.cos(angle))
+
+    def _build_recovery_fallback(self, curr_state, obstacle_step):
+        # 当前状态已经压进膨胀障碍物时，单纯停车通常会一直卡在碰撞状态里。
+        # 这里给一个保守的“倒车 + 远离障碍物方向转向”的开环恢复动作。
+        obstacle_vec = obstacle_step[:2] - curr_state[:2]
+        rel_bearing = self._normalize_angle(np.arctan2(obstacle_vec[1], obstacle_vec[0]) - curr_state[2])
+        turn_sign = -1.0 if rel_bearing > 0.0 else 1.0
+        v_cmd = -abs(self.collision_recovery_reverse_speed) if self.collision_recovery_allow_reverse else 0.0
+        omega_cmd = turn_sign * abs(self.collision_recovery_turn_rate)
+
+        input_res = np.tile(np.array([v_cmd, omega_cmd], dtype=float), (self.N, 1))
+        state_res = np.zeros((self.N + 1, 3), dtype=float)
+        state_res[0] = curr_state.copy()
+        for i in range(self.N):
+            state_res[i + 1, 0] = state_res[i, 0] + self.dt * input_res[i, 0] * np.cos(state_res[i, 2])
+            state_res[i + 1, 1] = state_res[i, 1] + self.dt * input_res[i, 0] * np.sin(state_res[i, 2])
+            state_res[i + 1, 2] = self._normalize_angle(state_res[i, 2] + self.dt * input_res[i, 1])
+
+        self.last_input = input_res.copy()
+        self.last_state = state_res.copy()
+        self.last_state_valid = True
+        return state_res, input_res
+
+    def _build_visibility_refs(self):
+        # 几何视野约束不直接盯着最终终点，而是盯着“路径前方一点”：
+        # 对预测第 i 步，要求更靠前的参考点仍落在车头视锥内。
+        vis_refs = np.zeros((self.N, 2))
+        for i in range(self.N):
+            ref_idx = min(self.N - 1, i + self.visibility_ref_step)
+            vis_refs[i] = self.goal_state[ref_idx, :2]
+        return vis_refs
+
     def solve_mpc_cbf(self):
         # 这里是局部规划器核心：
         # 建立并求解“带离散 CBF 安全约束、带软约束、带平滑项”的 MPC。
@@ -346,6 +498,15 @@ class MyLocalPlanner:
             obstacle_groups = self._obstacle_groups()
         active_obstacle_groups = [group for group in obstacle_groups if self._is_obstacle_relevant(curr_state, group)]
         obstacle_profiles = [self._obstacle_profile(group) for group in active_obstacle_groups]
+        inside_indices = [
+            j
+            for j, group in enumerate(active_obstacle_groups)
+            if self._ellipse_distance(curr_state[:2], group[0], obstacle_profiles[j]["padding"]) < 0.0
+        ]
+        inside_any_obstacle = len(inside_indices) > 0
+        use_visibility_constraint = self.enable_visibility_constraint and not (
+            inside_any_obstacle and self.collision_recovery_release_visibility
+        )
 
         opti = ca.Opti()
 
@@ -356,6 +517,7 @@ class MyLocalPlanner:
         opt_controls = opti.variable(self.N, 2)
         slack = opti.variable(self.N, len(active_obstacle_groups)) if (self.use_slack and active_obstacle_groups) else None
         terminal_slack = opti.variable(len(active_obstacle_groups)) if (self.use_slack and active_obstacle_groups) else None
+        vis_slack = opti.variable(self.N) if (use_visibility_constraint and self.visibility_use_slack) else None
         opt_x0 = opti.parameter(3)
 
         v = opt_controls[:, 0]
@@ -388,13 +550,25 @@ class MyLocalPlanner:
             # 典型表现就是无障碍时原地打转。
             return ca.atan2(ca.sin(angle_ - ref_angle_), ca.cos(angle_ - ref_angle_))
 
+        def visibility_barrier(state_, ref_xy):
+            # 第一版视野约束采用几何视锥形式：
+            # 前方参考点在当前车头朝向上的投影，必须大于“视锥边界”对应的最小投影。
+            rel_x = float(ref_xy[0]) - state_[0]
+            rel_y = float(ref_xy[1]) - state_[1]
+            dist = ca.sqrt(rel_x * rel_x + rel_y * rel_y + 1e-6)
+            forward = rel_x * ca.cos(state_[2]) + rel_y * ca.sin(state_[2])
+            return forward - dist * self.visibility_cos_half_fov - self.visibility_margin
+
         # ===== 2. 初始状态约束与控制边界 =====
         # 预测域起点必须等于当前机器人状态。
         opti.subject_to(opt_states[0, :] == opt_x0.T)
         # 远离终点时要求机器人保持向前推进，避免在无障碍场景下原地找角度；
         # 接近终点时再放松到 0，便于最终收敛。
         dist_to_goal = distance_global(curr_state, global_path[-1, :2])
-        effective_v_min = self.cruise_v_min if dist_to_goal > self.near_goal_dist else self.v_min
+        if inside_any_obstacle and self.collision_recovery_enable and self.collision_recovery_allow_reverse:
+            effective_v_min = min(self.v_min, -abs(self.collision_recovery_reverse_speed))
+        else:
+            effective_v_min = self.cruise_v_min if dist_to_goal > self.near_goal_dist else self.v_min
         opti.subject_to(opti.bounded(effective_v_min, v, self.v_max))
         opti.subject_to(opti.bounded(-self.omega_max, omega, self.omega_max))
 
@@ -404,6 +578,9 @@ class MyLocalPlanner:
                     opti.subject_to(slack[i, j] >= 0)
             for j in range(len(active_obstacle_groups)):
                 opti.subject_to(terminal_slack[j] >= 0)
+        if vis_slack is not None:
+            for i in range(self.N):
+                opti.subject_to(vis_slack[i] >= 0)
 
         # ===== 3. 系统动力学离散约束 =====
         # 将机器人运动学在整个预测时域内展开。
@@ -442,6 +619,18 @@ class MyLocalPlanner:
                     opti.subject_to(h_terminal + terminal_slack[j] >= 0)
                 else:
                     opti.subject_to(h_terminal >= 0)
+
+        # ===== 4.1 几何视野约束 =====
+        # 对每个预测步，要求“路径前方 look-ahead 参考点”仍在机器人当前视锥内。
+        # 这会直接约束 yaw 的演化，并在转角/盲区入口前促使机器人更早减速和摆正车头。
+        if use_visibility_constraint:
+            vis_refs = self._build_visibility_refs()
+            for i in range(self.N):
+                h_vis = visibility_barrier(opt_states[i + 1, :], vis_refs[i])
+                if vis_slack is not None:
+                    opti.subject_to(h_vis + vis_slack[i] >= 0)
+                else:
+                    opti.subject_to(h_vis >= 0)
 
         # ===== 5. 目标函数 =====
         # 这里重新拉回到更接近原版的结构：
@@ -482,6 +671,9 @@ class MyLocalPlanner:
         if terminal_slack is not None:
             for j in range(len(active_obstacle_groups)):
                 obj += self.terminal_slack_weight * terminal_slack[j] * terminal_slack[j]
+        if vis_slack is not None:
+            for i in range(self.N):
+                obj += self.visibility_slack_weight * ((self.N - i) / self.N) * vis_slack[i] * vis_slack[i]
 
         # 终端状态继续向参考线末端收敛。
         terminal_pos_err = opt_states[self.N, :2] - self.goal_state[[self.N - 1], :2]
@@ -508,6 +700,8 @@ class MyLocalPlanner:
             if slack is not None:
                 opti.set_initial(slack, 0)
                 opti.set_initial(terminal_slack, 0)
+            if vis_slack is not None:
+                opti.set_initial(vis_slack, 0)
 
         try:
             sol = opti.solve()
@@ -522,6 +716,9 @@ class MyLocalPlanner:
         except Exception:
             # 当前回退策略保持为“沿用上一轮解并平移”，优先保证连续性。
             rospy.logerr("My planner: Infeasible Solution")
+            if inside_any_obstacle and self.collision_recovery_enable:
+                recovery_obs = active_obstacle_groups[inside_indices[0]][0]
+                return self._build_recovery_fallback(curr_state, recovery_obs)
             return self._build_fallback(curr_state)
 
 

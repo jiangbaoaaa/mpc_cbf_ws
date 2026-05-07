@@ -229,6 +229,9 @@ class Local_Planner():
     def MPC_ellip(self):
         # 这里是整个局部规划器的核心：建立并求解“带椭圆障碍物 DCBF 约束的 MPC”。
         with self.curr_pose_lock, self.global_path_lock, self.obstacle_lock:
+            curr_state = self.curr_state.copy()
+            global_path = self.global_path.copy()
+            ob = [obs.copy() for obs in self.ob]
 
         opti = ca.Opti()
         # ===== 1. 基本参数 =====
@@ -314,7 +317,7 @@ class Local_Planner():
 
         # ===== 5. 控制边界约束 =====
         # 远离终点时要求前进速度非负；接近终点时允许轻微倒车，便于收敛到目标位姿。
-        if(distance_global(self.curr_state, self.global_path[-1, :2]) > 1):
+        if(distance_global(curr_state, global_path[-1, :2]) > 1):
             opti.subject_to(opti.bounded(v_min, v, v_max))
         else:
             opti.subject_to(opti.bounded(-v_min, v, v_max))
@@ -329,17 +332,17 @@ class Local_Planner():
 
         # /obs_predict_pub 的组织方式是：
         # 每个障碍物给出 N 步预测，每步一个椭圆，因此障碍物总数 = len(self.ob) / N。
-        num_obs = int(len(self.ob)/self.N)
+        num_obs = int(len(ob)/self.N)
 
         # ===== 7. 离散 DCBF 约束 =====
         # 对每个障碍物、每个预测步施加：
         #   h_{k+1} >= (1 - gamma_k) * h_k
         # 这保证系统在离散时间下保持安全集前向不变性。
         for j in range(num_obs):
-            if not exceed_ob(self.ob[25*j]):
+            if not exceed_ob(ob[25*j]):
                 for i in range(self.N-1):
-                    opti.subject_to(h(opt_states[i + 1, :], self.ob[j * 25 + i + 1]) >=
-                                    (1 - gamma_k) * h(opt_states[i, :], self.ob[j * 25 + i]))
+                    opti.subject_to(h(opt_states[i + 1, :], ob[j * 25 + i + 1]) >=
+                                    (1 - gamma_k) * h(opt_states[i, :], ob[j * 25 + i]))
 
         # ===== 8. 目标函数 =====
         # 由两部分组成：
@@ -363,7 +366,7 @@ class Local_Planner():
         opts_setting = {'ipopt.max_iter': 2000, 'ipopt.print_level': 0, 'print_time': 0, 'ipopt.acceptable_tol': 1e-3,
                         'ipopt.acceptable_obj_change_tol': 1e-3}
         opti.solver('ipopt', opts_setting)
-        opti.set_value(opt_x0, self.curr_state)
+        opti.set_value(opt_x0, curr_state)
 
         try:
             sol = opti.solve()

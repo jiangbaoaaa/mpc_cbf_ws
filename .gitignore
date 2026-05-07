@@ -10,6 +10,7 @@ logs/
 .claude/
 .agents/
 .codex
+.vscode/
 
 src/MPC-D-CBF/.codex
 src/MPC-D-CBF/.git.upstream_backup_*

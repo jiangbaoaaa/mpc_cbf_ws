@@ -3,8 +3,7 @@ Panels:
     Help Height: 0
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /Axes1
+      Expanded: ~
       Splitter Ratio: 0.40030211210250854
     Tree Height: 562
   - Class: rviz/Selection
@@ -183,7 +182,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0
@@ -198,7 +197,7 @@ Visualization Manager:
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Class: grid_map_rviz_plugin/GridMap
@@ -246,28 +245,29 @@ Visualization Manager:
       Queue Size: 100
       Value: true
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /pub_path_vis
       Name: LocalPath_Vis
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /global_goal_marker
       Name: GoalMarker
       Namespaces:
-        global_goal: true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
       Enabled: true
-      Marker Topic: /global_path_vis
-      Name: GlobalPath_Vis
+      Marker Topic: /visibility_refs_vis
+      Name: VisibilityRefs
       Namespaces:
-        global_path: true
-        global_waypoints: true
+        active_visibility_ref: true
+        visibility_ref_path: true
+        visibility_refs: true
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -343,7 +343,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 40.960304260253906
+      Distance: 9.968818664550781
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -351,17 +351,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -7.8760905265808105
-        Y: 0.37062519788742065
+        X: -3.3314759731292725
+        Y: -0.7307166457176208
         Z: -2.1352725525503047e-06
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.449796438217163
+      Pitch: 1.2497966289520264
       Target Frame: <Fixed Frame>
-      Yaw: 3.154888153076172
+      Yaw: 3.204890012741089
     Saved:
       - Class: rviz/Orbit
         Distance: 79.24484252929688
