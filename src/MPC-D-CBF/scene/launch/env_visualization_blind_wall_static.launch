@@ -30,6 +30,8 @@
   <arg name="publish_visibility_occ" default="true" />
   <arg name="visibility_occ_height_min" default="0.2" />
   <arg name="visibility_occ_inflate_cells" default="1" />
+  <arg name="publish_static_risk_points" default="true" />
+  <arg name="static_risk_search_radius" default="1.2" />
 
   <include file="$(find scene)/launch/sim_environment.launch">
     <arg name="world" value="$(arg world)" />
@@ -60,6 +62,8 @@
     <arg name="publish_visibility_occ" value="$(arg publish_visibility_occ)" />
     <arg name="visibility_occ_height_min" value="$(arg visibility_occ_height_min)" />
     <arg name="visibility_occ_inflate_cells" value="$(arg visibility_occ_inflate_cells)" />
+    <arg name="publish_static_risk_points" value="$(arg publish_static_risk_points)" />
+    <arg name="static_risk_search_radius" value="$(arg static_risk_search_radius)" />
   </include>
 
   <include file="$(find scene)/launch/visualization.launch">

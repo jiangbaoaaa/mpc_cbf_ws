@@ -2,10 +2,13 @@
 #include <tf/transform_listener.h>
 #include <tf_conversions/tf_eigen.h>
 #include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Path.h>
 
 #include <cmath>
+#include <limits>
 
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
@@ -40,6 +43,7 @@ Eigen::Vector2d robot_position2d;
 
 // ros sub & pub
 ros::Subscriber velodyne_sub;
+ros::Subscriber local_path_sub;
 
 ros::Publisher gridmap_pub;
 ros::Publisher ellipse_vis_pub;
@@ -47,6 +51,8 @@ ros::Publisher local_pcd_pub;
 ros::Publisher for_obs_track_pub;
 ros::Publisher fov_vis_pub;
 ros::Publisher visibility_occ_pub;
+ros::Publisher static_risk_points_pub;
+ros::Publisher static_risk_vis_pub;
 
 KMAlgorithm KM;
 
@@ -68,8 +74,12 @@ float fov_range_max = 7.0f;
 bool publish_visibility_occ = true;
 float visibility_occ_height_min = 0.2f;
 int visibility_occ_inflate_cells = 1;
+bool publish_static_risk_points = true;
+float static_risk_search_radius = 1.2f;
 
 constexpr double kPi = 3.14159265358979323846;
+
+std::vector<Eigen::Vector2d> predicted_path_points;
 
 void applyFovFilter(const pcl::PointCloud<pcl::PointXYZ> &src, pcl::PointCloud<pcl::PointXYZ> &dst)
 {
@@ -219,6 +229,138 @@ nav_msgs::OccupancyGrid buildVisibilityOccupancy()
   return grid;
 }
 
+std_msgs::Float32MultiArray buildStaticRiskPoints(const nav_msgs::OccupancyGrid &grid)
+{
+  std_msgs::Float32MultiArray msg;
+  if (!publish_static_risk_points || predicted_path_points.empty())
+  {
+    return msg;
+  }
+
+  std::vector<Eigen::Vector2d> occupied_centers;
+  occupied_centers.reserve(grid.data.size() / 10);
+  for (int cell_y = 0; cell_y < static_cast<int>(grid.info.height); ++cell_y)
+  {
+    for (int cell_x = 0; cell_x < static_cast<int>(grid.info.width); ++cell_x)
+    {
+      if (grid.data[cell_y * grid.info.width + cell_x] < 100)
+      {
+        continue;
+      }
+
+      const double world_x = grid.info.origin.position.x + (static_cast<double>(cell_x) + 0.5) * grid.info.resolution;
+      const double world_y = grid.info.origin.position.y + (static_cast<double>(cell_y) + 0.5) * grid.info.resolution;
+      occupied_centers.emplace_back(world_x, world_y);
+    }
+  }
+
+  msg.data.reserve(predicted_path_points.size() * 2);
+  const double max_dist_sq = static_cast<double>(static_risk_search_radius) * static_cast<double>(static_risk_search_radius);
+  const float nan_value = std::numeric_limits<float>::quiet_NaN();
+  for (const auto &path_point : predicted_path_points)
+  {
+    double best_dist_sq = std::numeric_limits<double>::infinity();
+    Eigen::Vector2d best_point = path_point;
+    bool found = false;
+
+    for (const auto &occupied_point : occupied_centers)
+    {
+      const double dist_sq = (occupied_point - path_point).squaredNorm();
+      if (dist_sq < best_dist_sq)
+      {
+        best_dist_sq = dist_sq;
+        best_point = occupied_point;
+        found = true;
+      }
+    }
+
+    if (found && best_dist_sq <= max_dist_sq)
+    {
+      msg.data.push_back(static_cast<float>(best_point.x()));
+      msg.data.push_back(static_cast<float>(best_point.y()));
+    }
+    else
+    {
+      msg.data.push_back(nan_value);
+      msg.data.push_back(nan_value);
+    }
+  }
+
+  return msg;
+}
+
+visualization_msgs::MarkerArray buildStaticRiskPointMarkers(const std_msgs::Float32MultiArray &risk_points_msg)
+{
+  visualization_msgs::MarkerArray marker_array;
+
+  visualization_msgs::Marker point_marker;
+  point_marker.header.frame_id = "world";
+  point_marker.header.stamp = ros::Time::now();
+  point_marker.ns = "static_risk_points";
+  point_marker.id = 0;
+  point_marker.type = visualization_msgs::Marker::SPHERE_LIST;
+  point_marker.pose.orientation.w = 1.0;
+  point_marker.scale.x = 0.18;
+  point_marker.scale.y = 0.18;
+  point_marker.scale.z = 0.18;
+  point_marker.color.r = 1.0;
+  point_marker.color.g = 0.25;
+  point_marker.color.b = 0.15;
+  point_marker.color.a = 0.95;
+
+  visualization_msgs::Marker link_marker;
+  link_marker.header = point_marker.header;
+  link_marker.ns = "static_risk_links";
+  link_marker.id = 1;
+  link_marker.type = visualization_msgs::Marker::LINE_LIST;
+  link_marker.pose.orientation.w = 1.0;
+  link_marker.scale.x = 0.04;
+  link_marker.color.r = 1.0;
+  link_marker.color.g = 0.55;
+  link_marker.color.b = 0.10;
+  link_marker.color.a = 0.75;
+
+  if (predicted_path_points.empty() || risk_points_msg.data.empty())
+  {
+    point_marker.action = visualization_msgs::Marker::DELETE;
+    link_marker.action = visualization_msgs::Marker::DELETE;
+    marker_array.markers.push_back(point_marker);
+    marker_array.markers.push_back(link_marker);
+    return marker_array;
+  }
+
+  point_marker.action = visualization_msgs::Marker::ADD;
+  link_marker.action = visualization_msgs::Marker::ADD;
+
+  const size_t pair_count = std::min(predicted_path_points.size(), risk_points_msg.data.size() / 2);
+  for (size_t i = 0; i < pair_count; ++i)
+  {
+    const float risk_x = risk_points_msg.data[2 * i];
+    const float risk_y = risk_points_msg.data[2 * i + 1];
+    if (!std::isfinite(risk_x) || !std::isfinite(risk_y))
+    {
+      continue;
+    }
+
+    geometry_msgs::Point risk_pt;
+    risk_pt.x = risk_x;
+    risk_pt.y = risk_y;
+    risk_pt.z = 0.08;
+    point_marker.points.push_back(risk_pt);
+
+    geometry_msgs::Point pred_pt;
+    pred_pt.x = predicted_path_points[i].x();
+    pred_pt.y = predicted_path_points[i].y();
+    pred_pt.z = 0.05;
+    link_marker.points.push_back(pred_pt);
+    link_marker.points.push_back(risk_pt);
+  }
+
+  marker_array.markers.push_back(point_marker);
+  marker_array.markers.push_back(link_marker);
+  return marker_array;
+}
+
 // robot pose obtain
 void updateTF()
 {
@@ -258,6 +400,21 @@ void pcd_transform()
   Eigen::Affine3d affine_transform;
   tf::transformTFToEigen(lidar_link_transform, affine_transform);
   pcl::transformPointCloud(velodyne_cloud_filter, velodyne_cloud_global, affine_transform);
+}
+
+void localPathCallback(const nav_msgs::Path::ConstPtr &msg)
+{
+  predicted_path_points.clear();
+  predicted_path_points.reserve(msg->poses.size());
+  for (const auto &pose_stamped : msg->poses)
+  {
+    const auto &pos = pose_stamped.pose.position;
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y))
+    {
+      continue;
+    }
+    predicted_path_points.emplace_back(pos.x, pos.y);
+  }
 }
 
 void lidar2gridmap(Eigen::MatrixXf &lidar_data_matrix)
@@ -415,10 +572,13 @@ int main(int argc, char **argv)
   for_obs_track_pub = nh.advertise<std_msgs::Float32MultiArray>("for_obs_track", 1);
   fov_vis_pub = nh.advertise<visualization_msgs::Marker>("fov_vis", 1);
   visibility_occ_pub = nh.advertise<nav_msgs::OccupancyGrid>("visibility_occ", 1);
+  static_risk_points_pub = nh.advertise<std_msgs::Float32MultiArray>("static_risk_points", 1);
+  static_risk_vis_pub = nh.advertise<visualization_msgs::MarkerArray>("static_risk_points_vis", 1);
   velodyne_sub = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1, [&](sensor_msgs::PointCloud2::ConstPtr msg)
                                                         { 
   pcl::fromROSMsg(*msg, velodyne_cloud);    
   updateTF(); });
+  local_path_sub = nh.subscribe<nav_msgs::Path>("/local_path", 1, localPathCallback);
 
   // param
   nh.param<float>("localmap_x_size", localmap_x_size, 10);
@@ -437,6 +597,8 @@ int main(int argc, char **argv)
   nh.param<bool>("publish_visibility_occ", publish_visibility_occ, true);
   nh.param<float>("visibility_occ_height_min", visibility_occ_height_min, 0.2f);
   nh.param<int>("visibility_occ_inflate_cells", visibility_occ_inflate_cells, 1);
+  nh.param<bool>("publish_static_risk_points", publish_static_risk_points, true);
+  nh.param<float>("static_risk_search_radius", static_risk_search_radius, 1.2f);
 
   nh.param<int>("block_size", block_size, localmap_x_size * _inv_resolution * 0.2);
   nh.param<int>("block_num", block_num, 5);
@@ -523,8 +685,18 @@ int main(int argc, char **argv)
     local_velodyne_msg.header.stamp = ros::Time::now();
     local_velodyne_msg.header.frame_id = "world";
     local_pcd_pub.publish(local_velodyne_msg);
-    if (publish_visibility_occ)
-      visibility_occ_pub.publish(buildVisibilityOccupancy());
+    if (publish_visibility_occ || publish_static_risk_points)
+    {
+      nav_msgs::OccupancyGrid visibility_grid = buildVisibilityOccupancy();
+      if (publish_visibility_occ)
+        visibility_occ_pub.publish(visibility_grid);
+      if (publish_static_risk_points)
+      {
+        std_msgs::Float32MultiArray static_risk_points = buildStaticRiskPoints(visibility_grid);
+        static_risk_points_pub.publish(static_risk_points);
+        static_risk_vis_pub.publish(buildStaticRiskPointMarkers(static_risk_points));
+      }
+    }
 
     grid_map_msgs::GridMap gridMapMessage;
     grid_map::GridMapRosConverter::toMessage(map_, gridMapMessage);

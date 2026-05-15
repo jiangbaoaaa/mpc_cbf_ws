@@ -27,6 +27,11 @@ my_local_planner:
   visibility_blocker_padding: 0.10
   visibility_use_occupancy_los: true
   visibility_occ_threshold: 50
+  use_static_risk_points: true
+  static_risk_point_safe_dist: 0.48
+  static_risk_point_gamma_k: 0.10
+  static_risk_point_slack_weight: 900.0
+  static_risk_point_terminal_slack_weight: 1400.0
   collision_recovery_enable: true
   collision_recovery_allow_reverse: true
   collision_recovery_reverse_speed: 0.15

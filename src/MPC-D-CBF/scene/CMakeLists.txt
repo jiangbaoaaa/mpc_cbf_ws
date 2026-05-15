@@ -22,6 +22,7 @@ include_directories(
 
 catkin_install_python(PROGRAMS
   scripts/gazebo_path_visualizer.py
+  scripts/experiment_logger.py
   scripts/reset_jackal_pose.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

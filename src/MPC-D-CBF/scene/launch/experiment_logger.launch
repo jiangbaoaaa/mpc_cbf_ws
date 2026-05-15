@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+
+<launch>
+  <arg name="label" default="blind_wall" />
+  <arg name="output_dir" default="$(env HOME)/.ros/mpc_dcbf_logs" />
+  <arg name="goal_tolerance" default="0.15" />
+
+  <node pkg="scene"
+        type="experiment_logger.py"
+        name="experiment_logger"
+        output="screen">
+    <param name="label" value="$(arg label)" />
+    <param name="output_dir" value="$(arg output_dir)" />
+    <param name="goal_tolerance" value="$(arg goal_tolerance)" />
+  </node>
+</launch>

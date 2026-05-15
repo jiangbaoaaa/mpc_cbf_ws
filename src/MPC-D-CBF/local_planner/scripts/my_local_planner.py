@@ -49,6 +49,15 @@ class MyLocalPlanner:
         self.visibility_use_occupancy_los = rospy.get_param("/my_local_planner/visibility_use_occupancy_los", True)
         self.visibility_occ_threshold = rospy.get_param("/my_local_planner/visibility_occ_threshold", 50)
         self.visibility_cos_half_fov = np.cos(np.deg2rad(0.5 * self.visibility_fov_deg))
+        self.use_static_risk_points = rospy.get_param("/my_local_planner/use_static_risk_points", True)
+        self.static_risk_point_safe_dist = rospy.get_param(
+            "/my_local_planner/static_risk_point_safe_dist", self.robot_radius + self.safety_margin + 0.05
+        )
+        self.static_risk_point_gamma_k = rospy.get_param("/my_local_planner/static_risk_point_gamma_k", 0.10)
+        self.static_risk_point_slack_weight = rospy.get_param("/my_local_planner/static_risk_point_slack_weight", 900.0)
+        self.static_risk_point_terminal_slack_weight = rospy.get_param(
+            "/my_local_planner/static_risk_point_terminal_slack_weight", 1400.0
+        )
         self.collision_recovery_enable = rospy.get_param("/my_local_planner/collision_recovery_enable", True)
         self.collision_recovery_allow_reverse = rospy.get_param("/my_local_planner/collision_recovery_allow_reverse", True)
         self.collision_recovery_reverse_speed = rospy.get_param("/my_local_planner/collision_recovery_reverse_speed", 0.15)
@@ -93,6 +102,7 @@ class MyLocalPlanner:
         self.global_path_s = None
         self.global_path_length = 0.0
         self.visibility_occ = None
+        self.static_risk_points = None
         self.ob = []
 
         # 保存上一轮优化解，用于：
@@ -106,6 +116,7 @@ class MyLocalPlanner:
         self.global_path_lock = threading.Lock()
         self.obstacle_lock = threading.Lock()
         self.visibility_occ_lock = threading.Lock()
+        self.static_risk_lock = threading.Lock()
 
         self.__timer_replan = rospy.Timer(rospy.Duration(self.replan_period), self.__replan_cb)
         self.__sub_curr_state = rospy.Subscriber("/curr_state", Float32MultiArray, self.__curr_pose_cb, queue_size=10)
@@ -113,6 +124,9 @@ class MyLocalPlanner:
         self.__sub_goal = rospy.Subscriber("/global_path", Path, self.__global_path_cb, queue_size=25)
         self.__sub_visibility_occ = rospy.Subscriber(
             "/local_map_pub/visibility_occ", OccupancyGrid, self.__visibility_occ_cb, queue_size=2
+        )
+        self.__sub_static_risk_points = rospy.Subscriber(
+            "/local_map_pub/static_risk_points", Float32MultiArray, self.__static_risk_points_cb, queue_size=2
         )
 
         self.__pub_local_path_vis = rospy.Publisher("/pub_path_vis", Marker, queue_size=10)
@@ -200,6 +214,13 @@ class MyLocalPlanner:
                 "origin_y": float(msg.info.origin.position.y),
                 "data": np.array(msg.data, dtype=np.int16).reshape((height, width)),
             }
+
+    def __static_risk_points_cb(self, data):
+        with self.static_risk_lock:
+            if len(data.data) == 0 or len(data.data) % 2 != 0:
+                self.static_risk_points = None
+                return
+            self.static_risk_points = np.array(data.data, dtype=float).reshape((-1, 2))
 
     def __publish_local_plan(self, input_sol, state_sol):
         # 将优化结果同时打包成：
@@ -457,6 +478,9 @@ class MyLocalPlanner:
             + 2.0 * c * s * (1.0 / (a * a) - 1.0 / (b * b)) * dx * dy
         )
         return b * (np.sqrt(max(quad, 0.0)) - 1.0) - padding
+
+    def _static_risk_distance(self, state_xy, risk_xy):
+        return np.linalg.norm(np.asarray(state_xy, dtype=float) - np.asarray(risk_xy, dtype=float)) - self.static_risk_point_safe_dist
 
     def _is_obstacle_relevant(self, curr_state, group):
         # 并不是所有障碍物都该进入当前 MPC。
@@ -724,14 +748,43 @@ class MyLocalPlanner:
             global_path = self.global_path.copy()
         with self.obstacle_lock:
             obstacle_groups = self._obstacle_groups()
-        active_obstacle_groups = [group for group in obstacle_groups if self._is_obstacle_relevant(curr_state, group)]
-        obstacle_profiles = [self._obstacle_profile(group) for group in active_obstacle_groups]
+        with self.static_risk_lock:
+            static_risk_points = None if self.static_risk_points is None else self.static_risk_points.copy()
+
+        near_risk_valid = False
+        if static_risk_points is not None and static_risk_points.shape[0] > 0:
+            near_window = static_risk_points[: min(5, static_risk_points.shape[0])]
+            near_risk_valid = np.any(np.all(np.isfinite(near_window), axis=1))
+        use_static_risk_points = self.use_static_risk_points and near_risk_valid
+
+        active_obstacle_groups = []
+        obstacle_profiles = []
+        for group in obstacle_groups:
+            if not self._is_obstacle_relevant(curr_state, group):
+                continue
+            profile = self._obstacle_profile(group)
+            if use_static_risk_points and not profile["is_dynamic"]:
+                continue
+            active_obstacle_groups.append(group)
+            obstacle_profiles.append(profile)
+
         inside_indices = [
             j
             for j, group in enumerate(active_obstacle_groups)
             if self._ellipse_distance(curr_state[:2], group[0], obstacle_profiles[j]["padding"]) < 0.0
         ]
-        inside_any_obstacle = len(inside_indices) > 0
+        static_risk_recovery_point = None
+        inside_static_risk = False
+        if use_static_risk_points:
+            for risk_xy in static_risk_points[: min(3, static_risk_points.shape[0])]:
+                if not np.all(np.isfinite(risk_xy)):
+                    continue
+                if self._static_risk_distance(curr_state[:2], risk_xy) < 0.0:
+                    inside_static_risk = True
+                    static_risk_recovery_point = risk_xy.copy()
+                    break
+
+        inside_any_obstacle = len(inside_indices) > 0 or inside_static_risk
         use_visibility_constraint = self.enable_visibility_constraint and not (
             inside_any_obstacle and self.collision_recovery_release_visibility
         )
@@ -746,6 +799,8 @@ class MyLocalPlanner:
         slack = opti.variable(self.N, len(active_obstacle_groups)) if (self.use_slack and active_obstacle_groups) else None
         terminal_slack = opti.variable(len(active_obstacle_groups)) if (self.use_slack and active_obstacle_groups) else None
         vis_slack = opti.variable(self.N) if (use_visibility_constraint and self.visibility_use_slack) else None
+        static_risk_slack = opti.variable(self.N) if (self.use_slack and use_static_risk_points) else None
+        static_risk_terminal_slack = opti.variable() if (self.use_slack and use_static_risk_points) else None
         opt_x0 = opti.parameter(3)
 
         v = opt_controls[:, 0]
@@ -787,6 +842,11 @@ class MyLocalPlanner:
             forward = rel_x * ca.cos(state_[2]) + rel_y * ca.sin(state_[2])
             return forward - dist * self.visibility_cos_half_fov - self.visibility_margin
 
+        def static_risk_barrier(state_, risk_xy):
+            dx = state_[0] - float(risk_xy[0])
+            dy = state_[1] - float(risk_xy[1])
+            return ca.sqrt(dx * dx + dy * dy + 1e-6) - self.static_risk_point_safe_dist
+
         # ===== 2. 初始状态约束与控制边界 =====
         # 预测域起点必须等于当前机器人状态。
         opti.subject_to(opt_states[0, :] == opt_x0.T)
@@ -809,6 +869,10 @@ class MyLocalPlanner:
         if vis_slack is not None:
             for i in range(self.N):
                 opti.subject_to(vis_slack[i] >= 0)
+        if static_risk_slack is not None:
+            for i in range(self.N):
+                opti.subject_to(static_risk_slack[i] >= 0)
+            opti.subject_to(static_risk_terminal_slack >= 0)
 
         # ===== 3. 系统动力学离散约束 =====
         # 将机器人运动学在整个预测时域内展开。
@@ -847,6 +911,32 @@ class MyLocalPlanner:
                     opti.subject_to(h_terminal + terminal_slack[j] >= 0)
                 else:
                     opti.subject_to(h_terminal >= 0)
+
+        if self.enable_cbf and use_static_risk_points:
+            risk_count = min(self.N, static_risk_points.shape[0])
+            for i in range(max(0, risk_count - 1)):
+                if not np.all(np.isfinite(static_risk_points[i])) or not np.all(np.isfinite(static_risk_points[i + 1])):
+                    continue
+                hk = static_risk_barrier(opt_states[i, :], static_risk_points[i])
+                hk_next = static_risk_barrier(opt_states[i + 1, :], static_risk_points[i + 1])
+                rhs = (1.0 - self.static_risk_point_gamma_k) * hk
+                if static_risk_slack is not None:
+                    opti.subject_to(hk_next + static_risk_slack[i] >= rhs)
+                else:
+                    opti.subject_to(hk_next >= rhs)
+
+            terminal_idx = None
+            for i in range(risk_count - 1, -1, -1):
+                if np.all(np.isfinite(static_risk_points[i])):
+                    terminal_idx = i
+                    break
+            if terminal_idx is not None:
+                terminal_state_idx = min(self.N, terminal_idx + 1)
+                h_terminal_static = static_risk_barrier(opt_states[terminal_state_idx, :], static_risk_points[terminal_idx])
+                if static_risk_terminal_slack is not None:
+                    opti.subject_to(h_terminal_static + static_risk_terminal_slack >= 0)
+                else:
+                    opti.subject_to(h_terminal_static >= 0)
 
         # ===== 4.1 几何视野约束 =====
         # 对每个预测步，要求“路径前方 look-ahead 参考点”仍在机器人当前视锥内。
@@ -902,6 +992,11 @@ class MyLocalPlanner:
         if vis_slack is not None:
             for i in range(self.N):
                 obj += self.visibility_slack_weight * ((self.N - i) / self.N) * vis_slack[i] * vis_slack[i]
+        if static_risk_slack is not None:
+            for i in range(self.N):
+                obj += self.static_risk_point_slack_weight * ((self.N - i) / self.N) * static_risk_slack[i] * static_risk_slack[i]
+        if static_risk_terminal_slack is not None:
+            obj += self.static_risk_point_terminal_slack_weight * static_risk_terminal_slack * static_risk_terminal_slack
 
         # 终端状态继续向参考线末端收敛。
         terminal_pos_err = opt_states[self.N, :2] - self.goal_state[[self.N - 1], :2]
@@ -930,6 +1025,9 @@ class MyLocalPlanner:
                 opti.set_initial(terminal_slack, 0)
             if vis_slack is not None:
                 opti.set_initial(vis_slack, 0)
+            if static_risk_slack is not None:
+                opti.set_initial(static_risk_slack, 0)
+                opti.set_initial(static_risk_terminal_slack, 0)
 
         try:
             sol = opti.solve()
@@ -945,8 +1043,11 @@ class MyLocalPlanner:
             # 当前回退策略保持为“沿用上一轮解并平移”，优先保证连续性。
             rospy.logerr("My planner: Infeasible Solution")
             if inside_any_obstacle and self.collision_recovery_enable:
-                recovery_obs = active_obstacle_groups[inside_indices[0]][0]
-                return self._build_recovery_fallback(curr_state, recovery_obs)
+                if inside_indices:
+                    recovery_obs = active_obstacle_groups[inside_indices[0]][0]
+                    return self._build_recovery_fallback(curr_state, recovery_obs)
+                if static_risk_recovery_point is not None:
+                    return self._build_recovery_fallback(curr_state, static_risk_recovery_point)
             return self._build_fallback(curr_state)
 
 

@@ -279,6 +279,15 @@ Visualization Manager:
         visibility_refs: true
       Queue Size: 100
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /local_map_pub/static_risk_points_vis
+      Name: StaticRiskPoints
+      Namespaces:
+        static_risk_links: true
+        static_risk_points: true
+      Queue Size: 100
+      Value: true
     - Alpha: 1
       Buffer Length: 1
       Class: rviz/Path
