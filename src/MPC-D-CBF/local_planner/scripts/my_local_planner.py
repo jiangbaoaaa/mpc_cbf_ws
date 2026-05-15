@@ -58,6 +58,13 @@ class MyLocalPlanner:
         self.static_risk_point_terminal_slack_weight = rospy.get_param(
             "/my_local_planner/static_risk_point_terminal_slack_weight", 1400.0
         )
+        self.use_static_risk_speed_limit = rospy.get_param("/my_local_planner/use_static_risk_speed_limit", False)
+        self.enable_static_risk_terminal_constraint = rospy.get_param(
+            "/my_local_planner/enable_static_risk_terminal_constraint", False
+        )
+        self.static_risk_constraint_horizon = max(
+            2, int(rospy.get_param("/my_local_planner/static_risk_constraint_horizon", 12))
+        )
         self.collision_recovery_enable = rospy.get_param("/my_local_planner/collision_recovery_enable", True)
         self.collision_recovery_allow_reverse = rospy.get_param("/my_local_planner/collision_recovery_allow_reverse", True)
         self.collision_recovery_reverse_speed = rospy.get_param("/my_local_planner/collision_recovery_reverse_speed", 0.15)
@@ -77,6 +84,19 @@ class MyLocalPlanner:
         self.delta_weight_omega = rospy.get_param("/my_local_planner/delta_weight_omega", 2.5)
         self.terminal_slack_weight = rospy.get_param("/my_local_planner/terminal_slack_weight", 800.0)
         self.path_reference_speed = rospy.get_param("/my_local_planner/path_reference_speed", 0.45)
+        self.enable_visibility_speed_schedule = rospy.get_param(
+            "/my_local_planner/enable_visibility_speed_schedule", True
+        )
+        self.path_reference_speed_min = rospy.get_param("/my_local_planner/path_reference_speed_min", 0.08)
+        self.visibility_speed_stop_dist = rospy.get_param("/my_local_planner/visibility_speed_stop_dist", 0.6)
+        self.visibility_speed_full_dist = rospy.get_param("/my_local_planner/visibility_speed_full_dist", 2.0)
+        self.static_risk_speed_min_dist = rospy.get_param("/my_local_planner/static_risk_speed_min_dist", 0.65)
+        self.static_risk_speed_full_dist = rospy.get_param("/my_local_planner/static_risk_speed_full_dist", 1.5)
+        self.speed_schedule_alpha = rospy.get_param("/my_local_planner/speed_schedule_alpha", 0.70)
+        self.speed_schedule_accel_limit = rospy.get_param("/my_local_planner/speed_schedule_accel_limit", 0.40)
+        self.speed_schedule_decel_limit = rospy.get_param("/my_local_planner/speed_schedule_decel_limit", 0.80)
+        self.speed_schedule_deadband = rospy.get_param("/my_local_planner/speed_schedule_deadband", 0.02)
+        self.speed_tracking_weight = rospy.get_param("/my_local_planner/speed_tracking_weight", 0.15)
         self.cruise_v_min = rospy.get_param("/my_local_planner/cruise_v_min", 0.15)
         self.near_goal_dist = rospy.get_param("/my_local_planner/near_goal_dist", 0.8)
         self.obstacle_padding = rospy.get_param("/my_local_planner/obstacle_padding", 0.22)
@@ -95,6 +115,7 @@ class MyLocalPlanner:
         # goal_state 存储从全局路径上截取出的局部参考轨迹，每一行是 [x, y, yaw]。
         self.goal_state = np.zeros((self.N, 3))
         self.last_visibility_refs = np.zeros((self.N, 2))
+        self.path_reference_speed_current = float(self.path_reference_speed)
 
         # 当前机器人状态 / 全局路径 / 障碍物预测，由各自回调函数维护。
         self.curr_state = None
@@ -143,18 +164,15 @@ class MyLocalPlanner:
         # 4. 发布局部轨迹与控制序列
         if not self.choose_goal_state():
             return
+        self._update_goal_state_yaw()
 
-        for i in range(self.N - 1):
-            y_diff = self.goal_state[i + 1, 1] - self.goal_state[i, 1]
-            x_diff = self.goal_state[i + 1, 0] - self.goal_state[i, 0]
-            if x_diff != 0 or y_diff != 0:
-                self.goal_state[i, 2] = np.arctan2(y_diff, x_diff)
-            elif i != 0:
-                self.goal_state[i, 2] = self.goal_state[i - 1, 2]
-            else:
-                self.goal_state[i, 2] = 0.0
-        self.goal_state[-1, 2] = self.goal_state[-2, 2]
-
+        vis_refs = self._build_visibility_refs() if self.enable_visibility_constraint else None
+        prev_speed = float(self.path_reference_speed_current)
+        self._update_reference_speed(vis_refs)
+        if abs(self.path_reference_speed_current - prev_speed) > 1e-3:
+            if not self.choose_goal_state():
+                return
+            self._update_goal_state_yaw()
         states_sol, input_sol = self.solve_mpc_cbf()
 
         cmd_move = Bool()
@@ -411,13 +429,107 @@ class MyLocalPlanner:
             return False
 
         start_s = self._project_path_s(curr_state[:2], global_path, global_path_s)
-        step_s = max(1e-3, float(self.path_reference_speed) * self.dt)
+        step_s = max(1e-3, float(self.path_reference_speed_current) * self.dt)
         for i in range(self.N):
             query_s = min(float(global_path_s[-1]), start_s + i * step_s)
             xy, yaw = self._sample_path_at_s(global_path, global_path_s, query_s)
             self.goal_state[i, 0:2] = xy
             self.goal_state[i, 2] = yaw
         return True
+
+    def _update_goal_state_yaw(self):
+        for i in range(self.N - 1):
+            y_diff = self.goal_state[i + 1, 1] - self.goal_state[i, 1]
+            x_diff = self.goal_state[i + 1, 0] - self.goal_state[i, 0]
+            if x_diff != 0 or y_diff != 0:
+                self.goal_state[i, 2] = np.arctan2(y_diff, x_diff)
+            elif i != 0:
+                self.goal_state[i, 2] = self.goal_state[i - 1, 2]
+            else:
+                self.goal_state[i, 2] = 0.0
+        self.goal_state[-1, 2] = self.goal_state[-2, 2]
+
+    def _speed_limit_from_distance(self, distance, stop_dist, full_dist):
+        nominal_speed = max(0.0, float(self.path_reference_speed))
+        min_speed = min(nominal_speed, max(0.0, float(self.path_reference_speed_min)))
+        if not np.isfinite(distance):
+            return nominal_speed
+        if full_dist <= stop_dist + 1e-6:
+            return min_speed if distance <= stop_dist else nominal_speed
+        if distance <= stop_dist:
+            return min_speed
+        if distance >= full_dist:
+            return nominal_speed
+        ratio = (distance - stop_dist) / (full_dist - stop_dist)
+        return min_speed + ratio * (nominal_speed - min_speed)
+
+    def _compute_visibility_speed_limit(self, curr_state, vis_refs):
+        nominal_speed = float(self.path_reference_speed)
+        if vis_refs is None or vis_refs.shape[0] == 0 or not np.all(np.isfinite(vis_refs[0])):
+            return nominal_speed
+        vis_dist = np.linalg.norm(np.asarray(vis_refs[0], dtype=float) - np.asarray(curr_state[:2], dtype=float))
+        return self._speed_limit_from_distance(vis_dist, self.visibility_speed_stop_dist, self.visibility_speed_full_dist)
+
+    def _nearest_static_risk_distance(self, curr_state, static_risk_points):
+        if static_risk_points is None or static_risk_points.shape[0] == 0:
+            return float("inf")
+        best_dist = float("inf")
+        risk_window = min(static_risk_points.shape[0], max(5, self.visibility_ref_step + 1))
+        for risk_xy in static_risk_points[:risk_window]:
+            if not np.all(np.isfinite(risk_xy)):
+                continue
+            dist = np.linalg.norm(np.asarray(risk_xy, dtype=float) - np.asarray(curr_state[:2], dtype=float))
+            if dist < best_dist:
+                best_dist = dist
+        return best_dist
+
+    def _compute_static_risk_speed_limit(self, curr_state, static_risk_points):
+        nominal_speed = float(self.path_reference_speed)
+        nearest_dist = self._nearest_static_risk_distance(curr_state, static_risk_points)
+        if not np.isfinite(nearest_dist):
+            return nominal_speed
+        return self._speed_limit_from_distance(
+            nearest_dist, self.static_risk_speed_min_dist, self.static_risk_speed_full_dist
+        )
+
+    def _update_reference_speed(self, vis_refs):
+        nominal_speed = max(0.0, float(self.path_reference_speed))
+        min_speed = min(nominal_speed, max(0.0, float(self.path_reference_speed_min)))
+        if not self.enable_visibility_speed_schedule:
+            self.path_reference_speed_current = nominal_speed
+            return self.path_reference_speed_current
+
+        with self.curr_pose_lock:
+            curr_state = None if self.curr_state is None else self.curr_state.copy()
+        with self.static_risk_lock:
+            static_risk_points = None if self.static_risk_points is None else self.static_risk_points.copy()
+
+        if curr_state is None:
+            self.path_reference_speed_current = nominal_speed
+            return self.path_reference_speed_current
+
+        visibility_limit = nominal_speed
+        if self.enable_visibility_constraint:
+            visibility_limit = self._compute_visibility_speed_limit(curr_state, vis_refs)
+
+        static_risk_limit = nominal_speed
+        if self.use_static_risk_points and self.use_static_risk_speed_limit:
+            static_risk_limit = self._compute_static_risk_speed_limit(curr_state, static_risk_points)
+
+        raw_speed = min(nominal_speed, visibility_limit, static_risk_limit)
+        prev_speed = float(self.path_reference_speed_current)
+        if abs(raw_speed - prev_speed) <= max(0.0, float(self.speed_schedule_deadband)):
+            self.path_reference_speed_current = prev_speed
+            return self.path_reference_speed_current
+        alpha = float(np.clip(self.speed_schedule_alpha, 0.0, 0.98))
+        filtered_speed = alpha * prev_speed + (1.0 - alpha) * raw_speed
+
+        max_up = max(0.0, float(self.speed_schedule_accel_limit)) * self.dt
+        max_down = max(0.0, float(self.speed_schedule_decel_limit)) * self.dt
+        lower_bound = max(min_speed, prev_speed - max_down)
+        upper_bound = min(nominal_speed, prev_speed + max_up)
+        self.path_reference_speed_current = float(np.clip(filtered_speed, lower_bound, upper_bound))
+        return self.path_reference_speed_current
 
     def _obstacle_groups(self):
         # /obs_predict_pub 的排列方式是：
@@ -853,6 +965,11 @@ class MyLocalPlanner:
         # 远离终点时要求机器人保持向前推进，避免在无障碍场景下原地找角度；
         # 接近终点时再放松到 0，便于最终收敛。
         dist_to_goal = distance_global(curr_state, global_path[-1, :2])
+        speed_ref = float(self.path_reference_speed_current)
+        if dist_to_goal <= self.near_goal_dist:
+            speed_ref *= max(0.0, min(1.0, dist_to_goal / max(self.near_goal_dist, 1e-3)))
+        if inside_any_obstacle:
+            speed_ref = -abs(self.collision_recovery_reverse_speed) if self.collision_recovery_allow_reverse else 0.0
         if inside_any_obstacle and self.collision_recovery_enable and self.collision_recovery_allow_reverse:
             effective_v_min = min(self.v_min, -abs(self.collision_recovery_reverse_speed))
         else:
@@ -913,7 +1030,7 @@ class MyLocalPlanner:
                     opti.subject_to(h_terminal >= 0)
 
         if self.enable_cbf and use_static_risk_points:
-            risk_count = min(self.N, static_risk_points.shape[0])
+            risk_count = min(self.N, static_risk_points.shape[0], self.static_risk_constraint_horizon)
             for i in range(max(0, risk_count - 1)):
                 if not np.all(np.isfinite(static_risk_points[i])) or not np.all(np.isfinite(static_risk_points[i + 1])):
                     continue
@@ -925,18 +1042,21 @@ class MyLocalPlanner:
                 else:
                     opti.subject_to(hk_next >= rhs)
 
-            terminal_idx = None
-            for i in range(risk_count - 1, -1, -1):
-                if np.all(np.isfinite(static_risk_points[i])):
-                    terminal_idx = i
-                    break
-            if terminal_idx is not None:
-                terminal_state_idx = min(self.N, terminal_idx + 1)
-                h_terminal_static = static_risk_barrier(opt_states[terminal_state_idx, :], static_risk_points[terminal_idx])
-                if static_risk_terminal_slack is not None:
-                    opti.subject_to(h_terminal_static + static_risk_terminal_slack >= 0)
-                else:
-                    opti.subject_to(h_terminal_static >= 0)
+            if self.enable_static_risk_terminal_constraint:
+                terminal_idx = None
+                for i in range(risk_count - 1, -1, -1):
+                    if np.all(np.isfinite(static_risk_points[i])):
+                        terminal_idx = i
+                        break
+                if terminal_idx is not None:
+                    terminal_state_idx = min(self.N, terminal_idx + 1)
+                    h_terminal_static = static_risk_barrier(
+                        opt_states[terminal_state_idx, :], static_risk_points[terminal_idx]
+                    )
+                    if static_risk_terminal_slack is not None:
+                        opti.subject_to(h_terminal_static + static_risk_terminal_slack >= 0)
+                    else:
+                        opti.subject_to(h_terminal_static >= 0)
 
         # ===== 4.1 几何视野约束 =====
         # 对每个预测步，要求“路径前方 look-ahead 参考点”仍在机器人当前视锥内。
@@ -970,6 +1090,7 @@ class MyLocalPlanner:
             obj += 0.1 * quadratic(state_err, q_mat)
             obj += 0.05 * yaw_err * yaw_err
             obj += quadratic(opt_controls[i, :], r_mat)
+            obj += self.speed_tracking_weight * (opt_controls[i, 0] - speed_ref) * (opt_controls[i, 0] - speed_ref)
 
             # 控制变化率惩罚是本次“更平滑版本”的关键：
             # 对第 0 步，约束其不要与上一轮首拍控制差太大；

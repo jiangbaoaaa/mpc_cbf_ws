@@ -28,10 +28,13 @@ my_local_planner:
   visibility_use_occupancy_los: true
   visibility_occ_threshold: 50
   use_static_risk_points: true
-  static_risk_point_safe_dist: 0.48
-  static_risk_point_gamma_k: 0.10
-  static_risk_point_slack_weight: 900.0
-  static_risk_point_terminal_slack_weight: 1400.0
+  static_risk_point_safe_dist: 0.42
+  static_risk_point_gamma_k: 0.06
+  static_risk_point_slack_weight: 600.0
+  static_risk_point_terminal_slack_weight: 900.0
+  use_static_risk_speed_limit: false
+  enable_static_risk_terminal_constraint: false
+  static_risk_constraint_horizon: 12
   collision_recovery_enable: true
   collision_recovery_allow_reverse: true
   collision_recovery_reverse_speed: 0.15
@@ -44,13 +47,24 @@ my_local_planner:
   terminal_slack_weight: 1800.0  # 终端安全收紧，减少贴边穿过
   static_slack_weight_scale: 0.5
   dynamic_slack_weight_scale: 1.8
-  path_reference_speed: 0.30
+  path_reference_speed: 0.60
+  enable_visibility_speed_schedule: true
+  path_reference_speed_min: 0.25
+  visibility_speed_stop_dist: 0.45
+  visibility_speed_full_dist: 1.10
+  static_risk_speed_min_dist: 0.52
+  static_risk_speed_full_dist: 0.75
+  speed_schedule_alpha: 0.75
+  speed_schedule_accel_limit: 0.80
+  speed_schedule_decel_limit: 0.80
+  speed_schedule_deadband: 0.02
+  speed_tracking_weight: 0.05
 
   # 【运动学极限】
   v_max: 1.1
   v_min: 0.0
   omega_max: 1.2         # 不再单纯放宽转向上限，改用平滑项抑制大幅猛打
-  cruise_v_min: 0.10     # 视野约束开启后，稍微降低巡航下限，减少盲区入口前的前冲
+  cruise_v_min: 0.20     # 视野约束开启后，稍微降低巡航下限，减少盲区入口前的前冲
   near_goal_dist: 1.0    # 接近终点后放松最小速度约束，便于最后收敛
 
   # 【平滑性调优】

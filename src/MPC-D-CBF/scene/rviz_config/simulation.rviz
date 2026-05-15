@@ -227,16 +227,16 @@ Visualization Manager:
       Name: VisibilityOcc
       Topic: /local_map_pub/visibility_occ
       Unreliable: false
+      Use Timestamp: false
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /local_map_pub/ellipse_vis
       Name: Fit_Ellipse
       Namespaces:
-        ellipse: true
-        text: true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/Marker
       Enabled: true
       Marker Topic: /local_map_pub/fov_vis
@@ -246,13 +246,13 @@ Visualization Manager:
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /obs_predict_vis_pub
       Name: Predict_Ellipse
       Namespaces:
-        ellipse: true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/Marker
       Enabled: false
       Marker Topic: /pub_path_vis
