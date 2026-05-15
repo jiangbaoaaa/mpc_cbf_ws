@@ -219,6 +219,15 @@ Visualization Manager:
       Unreliable: false
       Use Rainbow: true
       Value: false
+    - Alpha: 0.75
+      Class: rviz/Map
+      Color Scheme: map
+      Draw Behind: false
+      Enabled: true
+      Name: VisibilityOcc
+      Topic: /local_map_pub/visibility_occ
+      Unreliable: false
+      Value: true
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /local_map_pub/ellipse_vis

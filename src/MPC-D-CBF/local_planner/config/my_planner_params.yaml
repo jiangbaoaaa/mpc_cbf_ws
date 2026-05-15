@@ -23,6 +23,10 @@ my_local_planner:
   visibility_margin: 0.01
   visibility_use_slack: true
   visibility_slack_weight: 180.0
+  visibility_max_range: 4.0
+  visibility_blocker_padding: 0.10
+  visibility_use_occupancy_los: true
+  visibility_occ_threshold: 50
   collision_recovery_enable: true
   collision_recovery_allow_reverse: true
   collision_recovery_reverse_speed: 0.15
@@ -35,7 +39,8 @@ my_local_planner:
   terminal_slack_weight: 1800.0  # 终端安全收紧，减少贴边穿过
   static_slack_weight_scale: 0.5
   dynamic_slack_weight_scale: 1.8
-  
+  path_reference_speed: 0.30
+
   # 【运动学极限】
   v_max: 1.1
   v_min: 0.0

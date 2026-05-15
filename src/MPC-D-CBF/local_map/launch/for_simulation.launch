@@ -11,6 +11,9 @@
     <arg name="fov_range_min" default="0.2"/>
     <arg name="fov_range_max" default="7.0"/>
     <arg name="publish_fov_marker" default="true"/>
+    <arg name="publish_visibility_occ" default="true"/>
+    <arg name="visibility_occ_height_min" default="0.2"/>
+    <arg name="visibility_occ_inflate_cells" default="1"/>
 
     <node pkg="local_map" type="local_map_pub" output="screen" name="local_map_pub">  
         <param name="localmap_x_size" value="$(arg localmap_x_size)"/>  
@@ -25,5 +28,8 @@
         <param name="fov_range_min" value="$(arg fov_range_min)"/>
         <param name="fov_range_max" value="$(arg fov_range_max)"/>
         <param name="publish_fov_marker" value="$(arg publish_fov_marker)"/>
+        <param name="publish_visibility_occ" value="$(arg publish_visibility_occ)"/>
+        <param name="visibility_occ_height_min" value="$(arg visibility_occ_height_min)"/>
+        <param name="visibility_occ_inflate_cells" value="$(arg visibility_occ_inflate_cells)"/>
     </node>
 </launch>

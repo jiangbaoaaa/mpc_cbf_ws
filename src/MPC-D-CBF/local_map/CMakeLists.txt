@@ -7,6 +7,7 @@ set(CMAKE_BUILD_TYPE Release)
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   grid_map_ros
+  nav_msgs
   pcl_conversions
   roscpp
   sensor_msgs
@@ -20,7 +21,7 @@ find_package(CGAL REQUIRED)
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS geometry_msgs grid_map_ros pcl_conversions roscpp sensor_msgs std_msgs tf tf_conversions visualization_msgs
+  CATKIN_DEPENDS geometry_msgs grid_map_ros nav_msgs pcl_conversions roscpp sensor_msgs std_msgs tf tf_conversions visualization_msgs
 )
 
 include_directories(

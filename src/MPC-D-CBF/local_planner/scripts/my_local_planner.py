@@ -6,7 +6,7 @@ import casadi as ca
 import numpy as np
 import rospy
 from geometry_msgs.msg import Point, PoseStamped
-from nav_msgs.msg import Path
+from nav_msgs.msg import OccupancyGrid, Path
 from std_msgs.msg import Bool, ColorRGBA, Float32MultiArray
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -44,6 +44,10 @@ class MyLocalPlanner:
         self.visibility_margin = rospy.get_param("/my_local_planner/visibility_margin", 0.02)
         self.visibility_use_slack = rospy.get_param("/my_local_planner/visibility_use_slack", True)
         self.visibility_slack_weight = rospy.get_param("/my_local_planner/visibility_slack_weight", 300.0)
+        self.visibility_max_range = rospy.get_param("/my_local_planner/visibility_max_range", 6.0)
+        self.visibility_blocker_padding = rospy.get_param("/my_local_planner/visibility_blocker_padding", 0.08)
+        self.visibility_use_occupancy_los = rospy.get_param("/my_local_planner/visibility_use_occupancy_los", True)
+        self.visibility_occ_threshold = rospy.get_param("/my_local_planner/visibility_occ_threshold", 50)
         self.visibility_cos_half_fov = np.cos(np.deg2rad(0.5 * self.visibility_fov_deg))
         self.collision_recovery_enable = rospy.get_param("/my_local_planner/collision_recovery_enable", True)
         self.collision_recovery_allow_reverse = rospy.get_param("/my_local_planner/collision_recovery_allow_reverse", True)
@@ -63,6 +67,7 @@ class MyLocalPlanner:
         self.delta_weight_v = rospy.get_param("/my_local_planner/delta_weight_v", 0.4)
         self.delta_weight_omega = rospy.get_param("/my_local_planner/delta_weight_omega", 2.5)
         self.terminal_slack_weight = rospy.get_param("/my_local_planner/terminal_slack_weight", 800.0)
+        self.path_reference_speed = rospy.get_param("/my_local_planner/path_reference_speed", 0.45)
         self.cruise_v_min = rospy.get_param("/my_local_planner/cruise_v_min", 0.15)
         self.near_goal_dist = rospy.get_param("/my_local_planner/near_goal_dist", 0.8)
         self.obstacle_padding = rospy.get_param("/my_local_planner/obstacle_padding", 0.22)
@@ -80,10 +85,14 @@ class MyLocalPlanner:
         self.z = 0.0
         # goal_state 存储从全局路径上截取出的局部参考轨迹，每一行是 [x, y, yaw]。
         self.goal_state = np.zeros((self.N, 3))
+        self.last_visibility_refs = np.zeros((self.N, 2))
 
         # 当前机器人状态 / 全局路径 / 障碍物预测，由各自回调函数维护。
         self.curr_state = None
         self.global_path = None
+        self.global_path_s = None
+        self.global_path_length = 0.0
+        self.visibility_occ = None
         self.ob = []
 
         # 保存上一轮优化解，用于：
@@ -96,11 +105,15 @@ class MyLocalPlanner:
         self.curr_pose_lock = threading.Lock()
         self.global_path_lock = threading.Lock()
         self.obstacle_lock = threading.Lock()
+        self.visibility_occ_lock = threading.Lock()
 
         self.__timer_replan = rospy.Timer(rospy.Duration(self.replan_period), self.__replan_cb)
         self.__sub_curr_state = rospy.Subscriber("/curr_state", Float32MultiArray, self.__curr_pose_cb, queue_size=10)
         self.__sub_obs = rospy.Subscriber("/obs_predict_pub", Float32MultiArray, self.__obs_cb, queue_size=10)
         self.__sub_goal = rospy.Subscriber("/global_path", Path, self.__global_path_cb, queue_size=25)
+        self.__sub_visibility_occ = rospy.Subscriber(
+            "/local_map_pub/visibility_occ", OccupancyGrid, self.__visibility_occ_cb, queue_size=2
+        )
 
         self.__pub_local_path_vis = rospy.Publisher("/pub_path_vis", Marker, queue_size=10)
         self.__pub_local_path = rospy.Publisher("/local_path", Path, queue_size=10)
@@ -159,6 +172,34 @@ class MyLocalPlanner:
                 for i in range(size):
                     self.global_path[i, 0] = path.poses[i].pose.position.x
                     self.global_path[i, 1] = path.poses[i].pose.position.y
+                if size == 1:
+                    self.global_path_s = np.array([0.0], dtype=float)
+                    self.global_path_length = 0.0
+                else:
+                    diffs = np.diff(self.global_path[:, :2], axis=0)
+                    seg_lens = np.linalg.norm(diffs, axis=1)
+                    self.global_path_s = np.concatenate(([0.0], np.cumsum(seg_lens)))
+                    self.global_path_length = float(self.global_path_s[-1])
+            else:
+                self.global_path = None
+                self.global_path_s = None
+                self.global_path_length = 0.0
+
+    def __visibility_occ_cb(self, msg):
+        with self.visibility_occ_lock:
+            width = int(msg.info.width)
+            height = int(msg.info.height)
+            if width <= 0 or height <= 0 or len(msg.data) != width * height:
+                self.visibility_occ = None
+                return
+            self.visibility_occ = {
+                "resolution": float(msg.info.resolution),
+                "width": width,
+                "height": height,
+                "origin_x": float(msg.info.origin.position.x),
+                "origin_y": float(msg.info.origin.position.y),
+                "data": np.array(msg.data, dtype=np.int16).reshape((height, width)),
+            }
 
     def __publish_local_plan(self, input_sol, state_sol):
         # 将优化结果同时打包成：
@@ -257,7 +298,9 @@ class MyLocalPlanner:
             self.__pub_visibility_refs_vis.publish(marker_array)
             return
 
-        vis_refs = self._build_visibility_refs()
+        vis_refs = self.last_visibility_refs.copy()
+        if vis_refs.shape != (self.N, 2) or not np.any(np.isfinite(vis_refs)) or not np.any(np.abs(vis_refs) > 1e-9):
+            vis_refs = self._build_visibility_refs()
 
         refs_marker = Marker()
         refs_marker.header.stamp = rospy.Time.now()
@@ -332,21 +375,27 @@ class MyLocalPlanner:
         self.__pub_visibility_refs_vis.publish(marker_array)
 
     def choose_goal_state(self):
-        # 从全局路径中找到距离当前机器人最近的点，并向前截取 N 个点。
-        # 这一步把“全局导航任务”转换成“局部 MPC 参考轨迹”。
+        # 从全局路径上投影当前位置，然后按“参考速度 * dt”沿弧长推进。
+        # 这样局部参考跟真实时间尺度绑定，不再直接依赖路径点采样密度。
         with self.curr_pose_lock:
             curr_state = None if self.curr_state is None else self.curr_state.copy()
         with self.global_path_lock:
             global_path = None if self.global_path is None else self.global_path.copy()
+            global_path_s = None if self.global_path_s is None else self.global_path_s.copy()
 
-        if global_path is None or curr_state is None:
+        if global_path is None or global_path_s is None or curr_state is None:
             return False
 
-        waypoint_num = global_path.shape[0]
-        num = np.argmin(np.array([distance_global(curr_state, global_path[i]) for i in range(waypoint_num)]))
+        if global_path.shape[0] != global_path_s.shape[0]:
+            return False
+
+        start_s = self._project_path_s(curr_state[:2], global_path, global_path_s)
+        step_s = max(1e-3, float(self.path_reference_speed) * self.dt)
         for i in range(self.N):
-            num_path = min(waypoint_num - 1, num + i)
-            self.goal_state[i] = global_path[num_path]
+            query_s = min(float(global_path_s[-1]), start_s + i * step_s)
+            xy, yaw = self._sample_path_at_s(global_path, global_path_s, query_s)
+            self.goal_state[i, 0:2] = xy
+            self.goal_state[i, 2] = yaw
         return True
 
     def _obstacle_groups(self):
@@ -479,13 +528,192 @@ class MyLocalPlanner:
         return state_res, input_res
 
     def _build_visibility_refs(self):
-        # 几何视野约束不直接盯着最终终点，而是盯着“路径前方一点”：
-        # 对预测第 i 步，要求更靠前的参考点仍落在车头视锥内。
+        # 视野参考不再固定取某个 look-ahead step，而是沿参考轨迹往前扫描，
+        # 选出“当前仍在视锥内、且与遮挡障碍没有视线相交”的最远路径点。
+        with self.curr_pose_lock:
+            curr_state = None if self.curr_state is None else self.curr_state.copy()
+        with self.obstacle_lock:
+            obstacle_groups = self._obstacle_groups()
+        obstacle_profiles = [self._obstacle_profile(group) for group in obstacle_groups]
+
         vis_refs = np.zeros((self.N, 2))
         for i in range(self.N):
-            ref_idx = min(self.N - 1, i + self.visibility_ref_step)
-            vis_refs[i] = self.goal_state[ref_idx, :2]
+            fallback_idx = min(self.N - 1, i + 1)
+            chosen_idx = fallback_idx
+            preferred_start_idx = min(self.N - 1, i + self.visibility_ref_step)
+            anchor_state = self.goal_state[i].copy()
+            if i == 0 and curr_state is not None:
+                anchor_state = curr_state.copy()
+
+            for ref_idx in range(preferred_start_idx, self.N):
+                candidate_xy = self.goal_state[ref_idx, :2]
+                if self._is_visibility_candidate(anchor_state, candidate_xy, obstacle_groups, obstacle_profiles, i):
+                    chosen_idx = ref_idx
+            if chosen_idx == fallback_idx:
+                for ref_idx in range(preferred_start_idx - 1, i, -1):
+                    candidate_xy = self.goal_state[ref_idx, :2]
+                    if self._is_visibility_candidate(anchor_state, candidate_xy, obstacle_groups, obstacle_profiles, i):
+                        chosen_idx = ref_idx
+                        break
+            vis_refs[i] = self.goal_state[chosen_idx, :2]
+        self.last_visibility_refs = vis_refs.copy()
         return vis_refs
+
+    def _world_to_occ_index(self, point_xy, occ):
+        cell_x = int(np.floor((point_xy[0] - occ["origin_x"]) / occ["resolution"]))
+        cell_y = int(np.floor((point_xy[1] - occ["origin_y"]) / occ["resolution"]))
+        if cell_x < 0 or cell_x >= occ["width"] or cell_y < 0 or cell_y >= occ["height"]:
+            return None
+        return cell_x, cell_y
+
+    def _is_line_of_sight_free_occ(self, start_xy, end_xy):
+        with self.visibility_occ_lock:
+            occ = None if self.visibility_occ is None else {
+                "resolution": self.visibility_occ["resolution"],
+                "width": self.visibility_occ["width"],
+                "height": self.visibility_occ["height"],
+                "origin_x": self.visibility_occ["origin_x"],
+                "origin_y": self.visibility_occ["origin_y"],
+                "data": self.visibility_occ["data"].copy(),
+            }
+
+        if occ is None:
+            return True
+
+        start_xy = np.asarray(start_xy, dtype=float)
+        end_xy = np.asarray(end_xy, dtype=float)
+        rel = end_xy - start_xy
+        dist = np.linalg.norm(rel)
+        if dist < 1e-6:
+            return True
+
+        sample_step = max(0.5 * occ["resolution"], 1e-3)
+        num_samples = max(2, int(np.ceil(dist / sample_step)))
+        for step in range(1, num_samples + 1):
+            alpha = float(step) / float(num_samples)
+            query_xy = start_xy + alpha * rel
+            idx = self._world_to_occ_index(query_xy, occ)
+            if idx is None:
+                return False
+            if occ["data"][idx[1], idx[0]] >= self.visibility_occ_threshold:
+                return False
+        return True
+
+    def _segment_intersects_inflated_ellipse(self, p0, p1, obs_step, padding):
+        # 用线段与膨胀椭圆的解析相交测试近似 line-of-sight 遮挡。
+        a = max(float(obs_step[2]), 1e-3)
+        b = max(float(obs_step[3]), 1e-3)
+        inflate = max(0.0, float(padding))
+        scale = 1.0 + inflate / b
+        a_eff = a * scale
+        b_eff = b * scale
+
+        c = np.cos(float(obs_step[4]))
+        s = np.sin(float(obs_step[4]))
+        center = np.array([float(obs_step[0]), float(obs_step[1])], dtype=float)
+
+        def to_local(point_xy):
+            delta = np.asarray(point_xy, dtype=float) - center
+            return np.array([c * delta[0] + s * delta[1], -s * delta[0] + c * delta[1]], dtype=float)
+
+        q0 = to_local(p0)
+        q1 = to_local(p1)
+        dq = q1 - q0
+
+        def level_set(point_local):
+            return (point_local[0] / a_eff) ** 2 + (point_local[1] / b_eff) ** 2 - 1.0
+
+        if level_set(q0) <= 0.0 or level_set(q1) <= 0.0:
+            return True
+
+        quad_a = (dq[0] * dq[0]) / (a_eff * a_eff) + (dq[1] * dq[1]) / (b_eff * b_eff)
+        quad_b = 2.0 * ((q0[0] * dq[0]) / (a_eff * a_eff) + (q0[1] * dq[1]) / (b_eff * b_eff))
+        quad_c = (q0[0] * q0[0]) / (a_eff * a_eff) + (q0[1] * q0[1]) / (b_eff * b_eff) - 1.0
+
+        if quad_a < 1e-9:
+            return False
+
+        discriminant = quad_b * quad_b - 4.0 * quad_a * quad_c
+        if discriminant < 0.0:
+            return False
+
+        root_disc = np.sqrt(discriminant)
+        t1 = (-quad_b - root_disc) / (2.0 * quad_a)
+        t2 = (-quad_b + root_disc) / (2.0 * quad_a)
+        return (0.0 <= t1 <= 1.0) or (0.0 <= t2 <= 1.0)
+
+    def _is_visibility_candidate(self, anchor_state, candidate_xy, obstacle_groups, obstacle_profiles, step_idx):
+        rel = np.asarray(candidate_xy, dtype=float) - np.asarray(anchor_state[:2], dtype=float)
+        dist = np.linalg.norm(rel)
+        if dist < 1e-6:
+            return True
+        if dist > self.visibility_max_range:
+            return False
+        if self._visibility_score(anchor_state, candidate_xy) < 0.0:
+            return False
+
+        occ_visible = True
+        if self.visibility_use_occupancy_los:
+            occ_visible = self._is_line_of_sight_free_occ(anchor_state[:2], candidate_xy)
+            if not occ_visible:
+                return False
+
+        for group, profile in zip(obstacle_groups, obstacle_profiles):
+            if occ_visible and not profile["is_dynamic"]:
+                continue
+            obs_idx = min(step_idx, group.shape[0] - 1)
+            blocker_padding = profile["padding"] + self.visibility_blocker_padding
+            if self._segment_intersects_inflated_ellipse(anchor_state[:2], candidate_xy, group[obs_idx], blocker_padding):
+                return False
+        return True
+
+    def _project_path_s(self, curr_xy, global_path, global_path_s):
+        # 将当前位置投影到折线路径上，求得对应弧长坐标。
+        if global_path.shape[0] <= 1:
+            return 0.0
+
+        best_s = 0.0
+        best_dist_sq = float("inf")
+        for i in range(global_path.shape[0] - 1):
+            p0 = global_path[i, :2]
+            p1 = global_path[i + 1, :2]
+            seg = p1 - p0
+            seg_len_sq = float(np.dot(seg, seg))
+            if seg_len_sq < 1e-9:
+                continue
+
+            t = float(np.dot(curr_xy - p0, seg) / seg_len_sq)
+            t = min(1.0, max(0.0, t))
+            proj = p0 + t * seg
+            dist_sq = float(np.dot(curr_xy - proj, curr_xy - proj))
+            if dist_sq < best_dist_sq:
+                best_dist_sq = dist_sq
+                best_s = float(global_path_s[i] + t * np.sqrt(seg_len_sq))
+        return best_s
+
+    def _sample_path_at_s(self, global_path, global_path_s, query_s):
+        # 按弧长对全局路径做线性插值，输出 [x, y, yaw] 参考。
+        if global_path.shape[0] == 0:
+            return np.zeros(2), 0.0
+        if global_path.shape[0] == 1:
+            return global_path[0, :2].copy(), 0.0
+
+        query_s = min(max(float(query_s), 0.0), float(global_path_s[-1]))
+        idx = int(np.searchsorted(global_path_s, query_s, side="right") - 1)
+        idx = min(max(idx, 0), global_path.shape[0] - 2)
+
+        s0 = float(global_path_s[idx])
+        s1 = float(global_path_s[idx + 1])
+        if s1 - s0 < 1e-9:
+            ratio = 0.0
+        else:
+            ratio = (query_s - s0) / (s1 - s0)
+
+        p0 = global_path[idx, :2]
+        p1 = global_path[idx + 1, :2]
+        xy = (1.0 - ratio) * p0 + ratio * p1
+        yaw = np.arctan2(p1[1] - p0[1], p1[0] - p0[0])
+        return xy, yaw
 
     def solve_mpc_cbf(self):
         # 这里是局部规划器核心：

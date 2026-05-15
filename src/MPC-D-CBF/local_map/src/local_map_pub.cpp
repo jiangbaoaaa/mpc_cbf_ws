@@ -3,6 +3,7 @@
 #include <tf_conversions/tf_eigen.h>
 #include <visualization_msgs/Marker.h>
 #include <std_msgs/Float32MultiArray.h>
+#include <nav_msgs/OccupancyGrid.h>
 
 #include <cmath>
 
@@ -45,6 +46,7 @@ ros::Publisher ellipse_vis_pub;
 ros::Publisher local_pcd_pub;
 ros::Publisher for_obs_track_pub;
 ros::Publisher fov_vis_pub;
+ros::Publisher visibility_occ_pub;
 
 KMAlgorithm KM;
 
@@ -63,6 +65,9 @@ bool publish_fov_marker = true;
 float fov_deg = 70.0f;
 float fov_range_min = 0.2f;
 float fov_range_max = 7.0f;
+bool publish_visibility_occ = true;
+float visibility_occ_height_min = 0.2f;
+int visibility_occ_inflate_cells = 1;
 
 constexpr double kPi = 3.14159265358979323846;
 
@@ -147,6 +152,71 @@ void publishFovMarker()
 
   marker.points.push_back(origin);
   fov_vis_pub.publish(marker);
+}
+
+nav_msgs::OccupancyGrid buildVisibilityOccupancy()
+{
+  nav_msgs::OccupancyGrid grid;
+  const int width = std::max(1, static_cast<int>(std::round(localmap_x_size * _inv_resolution)));
+  const int height = std::max(1, static_cast<int>(std::round(localmap_y_size * _inv_resolution)));
+
+  grid.header.frame_id = "world";
+  grid.header.stamp = ros::Time::now();
+  grid.info.resolution = resolution;
+  grid.info.width = width;
+  grid.info.height = height;
+  grid.info.origin.position.x = robot_position2d.x() - 0.5 * localmap_x_size;
+  grid.info.origin.position.y = robot_position2d.y() - 0.5 * localmap_y_size;
+  grid.info.origin.position.z = 0.0;
+  grid.info.origin.orientation.w = 1.0;
+  grid.data.assign(width * height, 0);
+
+  auto markOccupied = [&](int cell_x, int cell_y) {
+    if (cell_x < 0 || cell_x >= width || cell_y < 0 || cell_y >= height)
+      return;
+    grid.data[cell_y * width + cell_x] = 100;
+  };
+
+  for (const auto &pt : velodyne_cloud_global.points)
+  {
+    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
+      continue;
+    if (pt.z < visibility_occ_height_min)
+      continue;
+
+    const int cell_x = static_cast<int>(std::floor((pt.x - grid.info.origin.position.x) / resolution));
+    const int cell_y = static_cast<int>(std::floor((pt.y - grid.info.origin.position.y) / resolution));
+    markOccupied(cell_x, cell_y);
+  }
+
+  if (visibility_occ_inflate_cells > 0)
+  {
+    std::vector<int8_t> inflated = grid.data;
+    for (int cell_y = 0; cell_y < height; ++cell_y)
+    {
+      for (int cell_x = 0; cell_x < width; ++cell_x)
+      {
+        if (grid.data[cell_y * width + cell_x] < 100)
+          continue;
+        for (int dy = -visibility_occ_inflate_cells; dy <= visibility_occ_inflate_cells; ++dy)
+        {
+          for (int dx = -visibility_occ_inflate_cells; dx <= visibility_occ_inflate_cells; ++dx)
+          {
+            if (dx * dx + dy * dy > visibility_occ_inflate_cells * visibility_occ_inflate_cells)
+              continue;
+            int nx = cell_x + dx;
+            int ny = cell_y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+              continue;
+            inflated[ny * width + nx] = 100;
+          }
+        }
+      }
+    }
+    grid.data.swap(inflated);
+  }
+
+  return grid;
 }
 
 // robot pose obtain
@@ -344,6 +414,7 @@ int main(int argc, char **argv)
   ellipse_vis_pub = nh.advertise<visualization_msgs::MarkerArray>("ellipse_vis", 1);
   for_obs_track_pub = nh.advertise<std_msgs::Float32MultiArray>("for_obs_track", 1);
   fov_vis_pub = nh.advertise<visualization_msgs::Marker>("fov_vis", 1);
+  visibility_occ_pub = nh.advertise<nav_msgs::OccupancyGrid>("visibility_occ", 1);
   velodyne_sub = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1, [&](sensor_msgs::PointCloud2::ConstPtr msg)
                                                         { 
   pcl::fromROSMsg(*msg, velodyne_cloud);    
@@ -363,6 +434,9 @@ int main(int argc, char **argv)
   nh.param<float>("fov_deg", fov_deg, 70.0f);
   nh.param<float>("fov_range_min", fov_range_min, 0.2f);
   nh.param<float>("fov_range_max", fov_range_max, 7.0f);
+  nh.param<bool>("publish_visibility_occ", publish_visibility_occ, true);
+  nh.param<float>("visibility_occ_height_min", visibility_occ_height_min, 0.2f);
+  nh.param<int>("visibility_occ_inflate_cells", visibility_occ_inflate_cells, 1);
 
   nh.param<int>("block_size", block_size, localmap_x_size * _inv_resolution * 0.2);
   nh.param<int>("block_num", block_num, 5);
@@ -449,6 +523,8 @@ int main(int argc, char **argv)
     local_velodyne_msg.header.stamp = ros::Time::now();
     local_velodyne_msg.header.frame_id = "world";
     local_pcd_pub.publish(local_velodyne_msg);
+    if (publish_visibility_occ)
+      visibility_occ_pub.publish(buildVisibilityOccupancy());
 
     grid_map_msgs::GridMap gridMapMessage;
     grid_map::GridMapRosConverter::toMessage(map_, gridMapMessage);

@@ -27,6 +27,9 @@
   <arg name="fov_range_min" default="0.2" />
   <arg name="fov_range_max" default="7.0" />
   <arg name="publish_fov_marker" default="true" />
+  <arg name="publish_visibility_occ" default="true" />
+  <arg name="visibility_occ_height_min" default="0.2" />
+  <arg name="visibility_occ_inflate_cells" default="1" />
 
   <include file="$(find scene)/launch/sim_environment.launch">
     <arg name="world" value="$(arg world)" />
@@ -54,6 +57,9 @@
     <arg name="fov_range_min" value="$(arg fov_range_min)" />
     <arg name="fov_range_max" value="$(arg fov_range_max)" />
     <arg name="publish_fov_marker" value="$(arg publish_fov_marker)" />
+    <arg name="publish_visibility_occ" value="$(arg publish_visibility_occ)" />
+    <arg name="visibility_occ_height_min" value="$(arg visibility_occ_height_min)" />
+    <arg name="visibility_occ_inflate_cells" value="$(arg visibility_occ_inflate_cells)" />
   </include>
 
   <include file="$(find scene)/launch/visualization.launch">
